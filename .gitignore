@@ -94,20 +94,20 @@ wandb/
 #
 # Git 只保存 meshes.zip；meshes/ 是本地解压后的运行时目录。
 # ==================================================
-**/resources/robots/**/meshes/
-!**/resources/robots/**/meshes.zip
+# **/resources/robots/**/meshes/
+# !**/resources/robots/**/meshes.zip
 
 # MuJoCo 只提交运行所需的精简模型；assert_now 下的导出工程、重复 STL、
 # 导出日志和临时 meshes.zip 均不提交。需要的 MJCF/地形会显式强制加入 Git。
-mujoco/assert_now/**
-mujoco/**/*.STL
-mujoco/**/*.stl
-mujoco/**/*.zip
-mujoco/**/export.log
-mujoco/**/MUJOCO_LOG.TXT
+# mujoco/assert_now/**
+# mujoco/**/*.STL
+# mujoco/**/*.stl
+# mujoco/**/*.zip
+# mujoco/**/export.log
+# mujoco/**/MUJOCO_LOG.TXT
 
 # MuJoCo 只提交四个运行脚本实际引用的策略文件；其余实验 ONNX 留在本地。
-mujoco/actor/**
+# mujoco/actor/**
 
 # 推胸 MuJoCo 仿真只在本地保留，不提交到仓库。
 mujoco/python_tools/*tuixiong*.py
