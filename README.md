@@ -2,19 +2,19 @@
 
 
 在本项目中：
-- `plane`：平地运动(但是有地形)。
+- `plane`：平地运动(但是有地形，反正是在平地跑的)。
 - `jump`：跳跃任务。
 
 ## 1. 环境要求
 
-- Linux(我用的Ubuntu22.04)   在gpufree算力自由平台上租用的服务器  感谢算力自由平台！(广告位招租)
+- Ubuntu(我用的Ubuntu22.04)   在gpufree算力自由平台上租用的服务器  感谢算力自由平台！(广告位招租)
 - NVIDIA GPU 与可用的 NVIDIA 驱动
 - CUDA 兼容的 PyTorch
 - Conda
 - Python 3.8
 - Isaac Gym Preview 4
 
-(windows似乎可以用wsl，但俺没试过
+windows似乎可以用wsl，但俺没试过
 
 创建新环境：
 
@@ -68,6 +68,9 @@ pip install -e .
 ```
 ## 4. 在isaacgym中train和play
 
+train和play脚本见isaacgym脚本.txt
+
+若需要可视化训练曲线，可使用tensorboard：
 ```bash
 tensorboard --logdir logs --port 8080
 ```
@@ -75,16 +78,6 @@ tensorboard --logdir logs --port 8080
 ```text
 http://localhost:8080
 ```
-
-需要先解压meshes文件
-```bash
-cd ~/plane/resources/robots/infantry_V4
-unzip meshes.zip
-
-cd ~/jump/resources/robots/infantry_V4
-unzip meshes.zip
-```
-train和play脚本见isaacgym脚本.txt
 
 ## 5.在mujoco中进行sim2sim验证
 
@@ -109,5 +102,6 @@ python python_tools/onnx_mj_binglian.py
 - [rsl_rl](https://github.com/leggedrobotics/rsl_rl)
 
 感谢chatgpt、codex等ai提供的大力支持！
+感谢复旦星云ega小伙伴们的帮助！
 
-代码简读见bbs
+其余见bbs
