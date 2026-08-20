@@ -32,6 +32,10 @@ pip-wheel-metadata/
 .venv/
 venv/
 env/
+!plane/wheel_legged_gym/rsl_rl/env/
+!plane/wheel_legged_gym/rsl_rl/env/*.py
+!jump/wheel_legged_gym/rsl_rl/env/
+!jump/wheel_legged_gym/rsl_rl/env/*.py
 ENV/
 conda-env/
 
