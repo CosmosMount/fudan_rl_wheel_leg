@@ -37,30 +37,30 @@ from wheel_legged_gym.envs.base.legged_robot_config import (
 class WheelLeggedCfg(LeggedRobotCfg):
 
     class init_state(LeggedRobotCfg.init_state):
-        pos = [0.0, 0.0, 0.1]  # x,y,z [m]
-        default_joint_angles = { "lf0_Joint": -0.23, 
-                                "lf1_Joint": -0.65, 
-                                "l_wheel_Joint": 0.0, 
-                                "rf0_Joint": 0.23, 
-                                "rf1_Joint": 0.65, 
-                                "r_wheel_Joint": 0.0, 
-                                }
         # pos = [0.0, 0.0, 0.1]  # x,y,z [m]
-        # default_joint_angles = { "lf0_Joint": 0.2, 
-        #                         "lf1_Joint": 0.4, 
+        # default_joint_angles = { "lf0_Joint": -0.23, 
+        #                         "lf1_Joint": -0.65, 
         #                         "l_wheel_Joint": 0.0, 
-        #                         "rf0_Joint": -0.2, 
-        #                         "rf1_Joint": -0.4, 
+        #                         "rf0_Joint": 0.23, 
+        #                         "rf1_Joint": 0.65, 
         #                         "r_wheel_Joint": 0.0, 
         #                         }
+        pos = [0.0, 0.0, 0.1]  # x,y,z [m]
+        default_joint_angles = { "lf0_Joint": 0.2, 
+                                "lf1_Joint": 0.4, 
+                                "l_wheel_Joint": 0.0, 
+                                "rf0_Joint": -0.2, 
+                                "rf1_Joint": -0.4, 
+                                "r_wheel_Joint": 0.0, 
+                                }
 
 
     class control(LeggedRobotCfg.control):
         pos_action_scale = 0.5
         vel_action_scale = 10.0
         # PD Drive parameters:
-        stiffness = {"f0": 10.0, "f1": 10.0, "wheel": 0.0}
-        damping = {"f0": 1.0, "f1": 1.0, "wheel": 0.1}
+        stiffness = {"f0": 20.0, "f1": 20.0, "wheel": 0.0}
+        damping = {"f0": 1.0, "f1": 1.0, "wheel": 0.2}
 
 
     class asset(LeggedRobotCfg.asset):

@@ -161,7 +161,7 @@ class LeggedRobotCfg(BaseConfig):
         randomize_restitution = True
         restitution_range = [0.5, 1.0]
         randomize_base_mass = True
-        added_mass_range = [-2.0, 23.0]
+        added_mass_range = [-2.0, 3.0]
         randomize_inertia = True
         randomize_inertia_range = [0.8, 1.2]
         randomize_base_com = True
@@ -177,7 +177,7 @@ class LeggedRobotCfg(BaseConfig):
         randomize_motor_torque_range = [0.9, 1.1]
         randomize_default_dof_pos = True
         randomize_default_dof_pos_range = [-0.05, 0.05]
-        randomize_action_delay = True
+        randomize_action_delay = False
         delay_ms_range = [0, 5]
 
     class rewards:

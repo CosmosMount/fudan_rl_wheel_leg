@@ -89,7 +89,7 @@ class LeggedRobotCfg(BaseConfig):
 
     class commands:
         curriculum = True
-        basic_max_curriculum = 1.0
+        basic_max_curriculum = 2.5
         advanced_max_curriculum = 1.5
         curriculum_threshold = 0.7
         num_commands = 3  # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
@@ -97,8 +97,8 @@ class LeggedRobotCfg(BaseConfig):
         heading_command = False  # if true: compute ang vel command from heading error
 
         class ranges:
-            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
-            ang_vel_yaw = [-15, 15]  # min max [rad/s]
+            lin_vel_x = [-2.0, 2.0]  # min max [m/s]
+            ang_vel_yaw = [-2, 2]  # min max [rad/s]
             height = [0.10, 0.20]
             heading = [-3.14, 3.14]
 
