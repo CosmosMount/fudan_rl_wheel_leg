@@ -1,107 +1,50 @@
-> **首先安装 Isaac Gym：前往 <https://developer.nvidia.com/isaac-gym> 下载 Isaac Gym Preview 4，解压后进入 `isaacgym/python`，执行 `pip install -e .`。**
+# WBR mjlab
 
+WBR 平地速度与跳跃任务的紧凑 mjlab 迁移。两套任务共享机器人、环境状态、观测、动作和训练实现，只通过配置覆盖保留原来的任务差异。
 
-在本项目中：
-- `plane`：平地运动(但是有地形，反正是在平地跑的)。
-- `jump`：跳跃任务。
+## 安装与命令
 
-## 1. 环境要求
-
-- Ubuntu(我用的Ubuntu22.04)   在gpufree算力自由平台上租用的服务器  感谢算力自由平台！(广告位招租)
-- NVIDIA GPU 与可用的 NVIDIA 驱动
-- CUDA 兼容的 PyTorch
-- Conda
-- Python 3.8
-- Isaac Gym Preview 4
-
-windows似乎可以用wsl，但俺没试过
-
-创建新环境：
+项目固定使用 `mjlab==1.6.0`、`rsl-rl-lib==5.4.2`。本机直接使用已有的
+micromamba `wbr` 环境，不创建项目内 `.venv`：
 
 ```bash
-conda create -n leg python=3.8 -y
-conda activate leg
+micromamba activate wbr
+python -m pip install --no-deps --no-build-isolation -e .
+train Mjlab-Velocity-Flat-WBR
+train Mjlab-Jump-Flat-WBR
+play Mjlab-Velocity-Flat-WBR
+play Mjlab-Jump-Flat-WBR
+export-wbr-policy \
+  --task Mjlab-Velocity-Flat-WBR \
+  --checkpoint logs/rsl_rl/wbr_plane/<RUN>/model_<ITER>.pt \
+  --output policy.onnx
+pytest
 ```
 
-## 2. 安装 Isaac Gym
+全新环境在 editable 安装前还需一次性安装轻量构建工具：
+`python -m pip install hatchling editables`。`uv.lock` 保留用于依赖版本审计和复现，
+但日常命令不通过 `uv run` 执行。
 
-1. 前往 <https://developer.nvidia.com/isaac-gym> 下载 Isaac Gym Preview 4。
-2. 解压后安装 Python 包：
+mjlab 通过项目的 `mjlab.tasks` entry point 自动发现两个任务，无需修改 mjlab 本身。
 
-安装教程可以参考这篇文章，提出了numpy和matp库版本问题解决方法。
-https://blog.csdn.net/littlewells/article/details/140179837
+## 固定接口
 
-```bash
-cd ~/isaacgym/python
-pip install -e .
-```
+- `policy`: 当前 25 维本体观测。
+- `history`: 单一 25 维 term 的 5 帧历史，按帧排列为 125 维。
+- `critic`: 141 维特权观测。
+- 动作顺序: `ljoint1, ljoint4, lwheel, rjoint1, rjoint4, rwheel`。
+- ONNX: 输入 `obs[B,25]`、`obs_history[B,125]`，输出 `actions[B,6]`。
 
-3. 运行 NVIDIA 示例验证安装：
+仿真使用 1 ms Euler/Newton 步长、20 次迭代、`1e-9` 容差；每次 policy step 固定执行 10 个物理子步。腿部在每个子步执行位置 PD，轮子执行速度 PD，两个气弹簧 tendon actuator 的控制量保持为零并由 MJCF bias 产生被动力。
 
-```bash
-cd ~/isaacgym/python/examples
-python 1080_balls_of_solitude.py
-```
+## 文件职责
 
-正常显示大量小球即说明 Isaac Gym 基本可用。若提示段错误，则考虑显卡驱动版本和设备是否有显示器，若无显示器则只能使用headless训练
+- `assets/wbr.xml`: 无 mesh、无外部路径的自包含碰撞/简洁可视 MJCF。
+- `src/wbr_mjlab/robot.py`: 模型入口和控制系统常量。
+- `src/wbr_mjlab/task.py`: plane/jump 共享任务工厂。
+- `src/wbr_mjlab/mdp.py`: 状态缓存、观测、混合动作、奖励、随机化和课程。
+- `src/wbr_mjlab/rl.py`: 最小 Sequence-PPO、续训状态和 ONNX 导出。
+- `tests/test_migration.py`: 模型、MDP、环境、学习与导出验收。
+- `assets/policies/legacy_*.onnx`: 仅归档的旧模型，不用于新 WBR 部署或续训。
 
-如果出现 `libpython3.8m.so.1.0` 或动态库找不到的问题，可先执行：
-
-```bash
-export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-```
-
-## 3. 安装本项目
-
-### 3.1 平地与通用运动版本
-
-```bash
-cd ~/plane
-pip install -e .
-```
-
-### 3.2 跳跃版本
-
-```bash
-cd ~/jump
-pip install -e .
-```
-## 4. 在isaacgym中train和play
-
-train和play脚本见isaacgym脚本.txt
-
-若需要可视化训练曲线，可使用tensorboard：
-```bash
-tensorboard --logdir logs --port 8080
-```
-浏览器打开：
-```text
-http://localhost:8080
-```
-
-## 5.在mujoco中进行sim2sim验证
-
-新创建一个python3.9的环境，mujoco版本为3.2.7，其他的缺啥补啥即可
-```bash
-cd mujoco
-python python_tools/onnx_mj_chuanlian.py
-python python_tools/onnx_mj_binglian.py
-```
-需要有桌面的或者通过X11转发进行可视化
-
-## 6. 致谢
-本项目基于以下工作：
-
-感谢玺佬开源感谢玺佬开源！！！！！！
-
-- [玺佬万岁万岁万万岁](https://github.com/clearlab-sustech/Wheel-Legged-Gym.git)
-
-以及：
-- [NVIDIA Isaac Gym](https://developer.nvidia.com/isaac-gym)
-- [legged_gym](https://github.com/leggedrobotics/legged_gym)
-- [rsl_rl](https://github.com/leggedrobotics/rsl_rl)
-
-感谢chatgpt、codex等ai提供的大力支持！
-感谢复旦星云ega小伙伴们的帮助！
-
-其余见bbs
+已在 RTX 3090 上完成 GPU 验收：plane 8192 env 和 jump 4096 env 均运行 10 iterations，无 NaN 或闭链发散；两套任务的 checkpoint 恢复、play 推理步进与 ONNX 导出也均通过。

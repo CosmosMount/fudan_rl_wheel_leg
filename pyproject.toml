@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wbr-mjlab"
+version = "0.1.0"
+description = "WBR wheel-legged plane and jump tasks for mjlab"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "mjlab==1.6.0",
+  "rsl-rl-lib==5.4.2",
+]
+
+[project.scripts]
+export-wbr-policy = "wbr_mjlab.rl:export_main"
+
+[project.entry-points."mjlab.tasks"]
+wbr_mjlab = "wbr_mjlab"
+
+[dependency-groups]
+dev = [
+  "onnxruntime>=1.19.0,<1.24",
+  "pytest>=8.3.0",
+  "ruff>=0.12.0",
+]
+
+[tool.uv]
+constraint-dependencies = ["lxml>=6.0.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wbr_mjlab"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"assets/wbr.xml" = "wbr_mjlab/assets/wbr.xml"
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
+indent-width = 2
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
