@@ -82,11 +82,18 @@ def main() -> None:
       }
       import warp as wp
 
+      active_contacts = int(wp.to_torch(env.sim.wp_data.nacon)[0])
+      contact_worlds = wp.to_torch(env.sim.wp_data.contact.worldid)[:active_contacts].long()
+      contacts_per_env = torch.bincount(contact_worlds, minlength=args.num_envs)
       result["final_state_diagnostics"] = {
         "max_constraints": int(wp.to_torch(env.sim.wp_data.nefc).max()),
-        "total_contacts": int(wp.to_torch(env.sim.wp_data.nacon).sum()),
+        "max_contacts_per_env": int(contacts_per_env.max()),
+        "active_contacts": active_contacts,
+        "contact_capacity": int(env.sim.wp_data.naconmax),
         "max_solver_iterations": int(wp.to_torch(env.sim.wp_data.solver_niter).max()),
-        "mean_solver_iterations": float(wp.to_torch(env.sim.wp_data.solver_niter).float().mean()),
+        "mean_solver_iterations": float(
+          wp.to_torch(env.sim.wp_data.solver_niter).float().mean()
+        ),
       }
       if args.profile:
         from torch.profiler import ProfilerActivity, profile, record_function

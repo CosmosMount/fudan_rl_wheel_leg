@@ -146,10 +146,11 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
       azimuth=90.0,
     ),
     sim=SimulationCfg(
-      # Measured peaks stay below these capacities in plane and jump stress
-      # tests. Smaller buffers reduce the dense MuJoCo-Warp solver workload.
+      # Plane and jump stress tests peaked at 16 contacts per environment.
+      # Reducing only the contact buffer speeds up MuJoCo-Warp; lowering njmax
+      # did not provide a repeatable gain, so its conservative default remains.
       nconmax=64,
-      njmax=128,
+      njmax=200,
       mujoco=MujocoCfg(
         timestep=0.001,
         integrator="euler",
