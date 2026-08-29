@@ -377,6 +377,8 @@ def test_wbr_control_geometry_is_mirrored_and_continuous(model: mujoco.MjModel) 
 def test_task_configuration_and_reward_table() -> None:
   plane, jump = make_env_cfg("plane"), make_env_cfg("jump")
   assert (plane.scene.num_envs, jump.scene.num_envs) == (8192, 4096)
+  assert (plane.sim.nconmax, plane.sim.njmax) == (64, 128)
+  assert (jump.sim.nconmax, jump.sim.njmax) == (64, 128)
   assert plane.episode_length_s == jump.episode_length_s == 20.0
   assert plane.decimation == jump.decimation == 10
   assert plane.sim.mujoco.timestep == jump.sim.mujoco.timestep == 0.001

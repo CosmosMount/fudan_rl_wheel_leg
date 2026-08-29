@@ -146,8 +146,10 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
       azimuth=90.0,
     ),
     sim=SimulationCfg(
-      nconmax=200,
-      njmax=200,
+      # Measured peaks stay below these capacities in plane and jump stress
+      # tests. Smaller buffers reduce the dense MuJoCo-Warp solver workload.
+      nconmax=64,
+      njmax=128,
       mujoco=MujocoCfg(
         timestep=0.001,
         integrator="euler",
