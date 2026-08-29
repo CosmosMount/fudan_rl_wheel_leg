@@ -543,6 +543,23 @@ def test_encoder_is_frozen_for_ppo_and_updated_by_auxiliary() -> None:
   )
 
 
+def test_ppo_reuses_one_history_encoding_per_batch() -> None:
+  torch.manual_seed(11)
+  alg = _filled_algorithm()
+  calls = 0
+
+  def count_calls(_module, _args, _output) -> None:
+    nonlocal calls
+    calls += 1
+
+  handle = alg.policy.encoder.register_forward_hook(count_calls)
+  try:
+    alg.ppo_update()
+  finally:
+    handle.remove()
+  assert calls == alg.cfg.num_learning_epochs * alg.cfg.num_mini_batches
+
+
 def test_checkpoint_restores_models_optimizers_and_rng(tmp_path: Path) -> None:
   torch.manual_seed(12)
   np.random.seed(12)

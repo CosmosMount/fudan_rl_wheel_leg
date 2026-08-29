@@ -178,18 +178,29 @@ class SequencePPO:
     )
 
   def _distribution(self, obs: TensorDict) -> Normal:
-    mean = self.policy.mean(obs["policy"], obs["history"], detach=True)
+    with torch.no_grad():
+      latent = self.policy.encoder(obs["history"])
+    mean = self.policy.actor(torch.cat((obs["policy"], latent), dim=-1))
     return Normal(mean, self.policy.std.expand_as(mean))
 
   def _value(self, obs: TensorDict) -> torch.Tensor:
-    latent = self.policy.encoder(obs["history"]).detach()
+    with torch.no_grad():
+      latent = self.policy.encoder(obs["history"])
     return self.critic(obs["critic"], latent)
 
+  def _actor_critic(self, obs: TensorDict) -> tuple[Normal, torch.Tensor]:
+    """Evaluate the shared frozen history latent once for actor and critic."""
+    with torch.no_grad():
+      latent = self.policy.encoder(obs["history"])
+    mean = self.policy.actor(torch.cat((obs["policy"], latent), dim=-1))
+    dist = Normal(mean, self.policy.std.expand_as(mean))
+    return dist, self.critic(obs["critic"], latent)
+
   def act(self, obs: TensorDict) -> torch.Tensor:
-    dist = self._distribution(obs)
+    dist, values = self._actor_critic(obs)
     actions = dist.sample()
     self.transition.actions = actions.detach()
-    self.transition.values = self._value(obs).detach()
+    self.transition.values = values.detach()
     self.transition.actions_log_prob = dist.log_prob(actions).sum(-1).detach()
     self.transition.distribution_params = (dist.mean.detach(), dist.stddev.detach())
     self.transition.observations = obs
@@ -251,9 +262,8 @@ class SequencePPO:
     )
     for batch in generator:
       assert batch.observations is not None
-      dist = self._distribution(batch.observations)
+      dist, values = self._actor_critic(batch.observations)
       log_prob = dist.log_prob(batch.actions).sum(-1)
-      values = self._value(batch.observations)
       old_mean, old_std = batch.old_distribution_params
       self._adapt_learning_rate(old_mean, old_std, dist.mean, dist.stddev)
       ratio = torch.exp(log_prob - batch.old_actions_log_prob.squeeze(-1))
