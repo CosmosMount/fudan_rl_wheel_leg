@@ -82,7 +82,9 @@ class OnnxPolicy(nn.Module):
 @dataclass
 class SequencePpoCfg:
   class_name: str = "wbr_mjlab.rl:SequencePPO"
-  num_learning_epochs: int = 5
+  # Large rollouts already contain 393k plane transitions. Three passes lower
+  # the update-to-data ratio while retaining four independently sized batches.
+  num_learning_epochs: int = 3
   num_mini_batches: int = 4
   clip_param: float = 0.2
   gamma: float = 0.99

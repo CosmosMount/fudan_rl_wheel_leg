@@ -411,6 +411,7 @@ def test_task_configuration_and_reward_table() -> None:
   assert "velocity" in plane.curriculum and not jump.curriculum
   assert "push" not in plane.events and "push" in jump.events
   assert asdict(sequence_runner_cfg("plane"))["algorithm"]["desired_kl"] == 0.005
+  assert asdict(sequence_runner_cfg("plane"))["algorithm"]["num_learning_epochs"] == 3
   assert sequence_runner_cfg("plane").seed == 1
 
 
