@@ -13,12 +13,17 @@ from mjlab.managers.action_manager import ActionTerm, ActionTermCfg
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
 
+from .rewards import joint_position_limit_penalty as joint_position_limit_penalty
+from .rewards import reward_value
+from .rewards import weighted_clipped_reward as weighted_clipped_reward
 from .robot import (
   ACTIVE_JOINT_NAMES,
   HOME_ACTIVE_JOINT_POS,
+  LEG_IDS,
   LEG_LINK_1,
   LEG_LINK_2,
   MOTOR_ZERO_RAD,
+  POLICY_DT,
   TORQUE_LIMITS,
 )
 
@@ -26,8 +31,6 @@ if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 Mode = Literal["plane", "jump"]
-LEG_IDS = (0, 1, 3, 4)
-POLICY_DT = 0.01
 
 
 def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -36,9 +39,11 @@ def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
   return v + 2.0 * torch.cross(qv, torch.cross(qv, v, dim=-1) - qw * v, dim=-1)
 
 
-def virtual_leg_geometry(active_q: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def virtual_leg_geometry(
+  active_q: torch.Tensor, *, motor_zero: torch.Tensor | None = None
+) -> tuple[torch.Tensor, torch.Tensor]:
   """WBR five-bar length and angle using wbr_control signs and mechanical zeros."""
-  zero = active_q.new_tensor(MOTOR_ZERO_RAD)
+  zero = active_q.new_tensor(MOTOR_ZERO_RAD) if motor_zero is None else motor_zero
   q = active_q - zero
   phi1 = torch.stack((math.pi - q[:, 0], math.pi + q[:, 3]), dim=1)
   phi4 = torch.stack((-q[:, 1], q[:, 4]), dim=1)
@@ -67,17 +72,17 @@ def update_fall_counter(count: torch.Tensor, bad: torch.Tensor) -> torch.Tensor:
   return torch.where(bad, count + 1, torch.zeros_like(count))
 
 
-def weighted_clipped_reward(raw: torch.Tensor, weight: float, clip: float) -> torch.Tensor:
-  return (raw * weight).clamp(-clip, clip)
-
-
-def joint_position_limit_penalty(q: torch.Tensor, limits: torch.Tensor) -> torch.Tensor:
-  """Legacy soft-limit distance for the four leg motors."""
-  leg_q = q[:, LEG_IDS]
-  leg_limits = limits[:, LEG_IDS]
-  below = -(leg_q - leg_limits[..., 0]).clamp(max=0.0)
-  above = (leg_q - leg_limits[..., 1]).clamp(min=0.0)
-  return (below + above).sum(dim=1)
+def hybrid_constants(
+  like: torch.Tensor, mode: Mode
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+  """Allocate controller constants once, outside the physics substep loop."""
+  kp, kd = (20.0, 1.0) if mode == "plane" else (6.0, 0.5)
+  return (
+    like.new_tensor((kp, kp, 0.0, kp, kp, 0.0)),
+    like.new_tensor((kd, kd, 0.2, kd, kd, 0.2)),
+    like.new_tensor(TORQUE_LIMITS),
+    torch.tensor((2, 5), dtype=torch.long, device=like.device),
+  )
 
 
 def hybrid_torque(
@@ -89,19 +94,20 @@ def hybrid_torque(
   kd_scale: torch.Tensor,
   torque_scale: torch.Tensor,
   mode: Mode,
+  *,
+  constants: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
 ) -> torch.Tensor:
   """Original four position-PD legs plus two velocity-PD wheels."""
-  base_kp = action.new_tensor((20.0, 20.0, 0.0, 20.0, 20.0, 0.0))
-  base_kd = action.new_tensor((1.0, 1.0, 0.2, 1.0, 1.0, 0.2))
-  if mode == "jump":
-    base_kp[[0, 1, 3, 4]] = 6.0
-    base_kd[[0, 1, 3, 4]] = 0.5
+  base_kp, base_kd, limits, wheel_ids = (
+    hybrid_constants(action, mode) if constants is None else constants
+  )
   target_q = default_q + 0.5 * action
   target_qd = 10.0 * action
   torque = base_kp * kp_scale * (target_q - q) - base_kd * kd_scale * qd
-  torque[:, (2, 5)] = base_kd[[2, 5]] * kd_scale[:, (2, 5)] * (target_qd[:, (2, 5)] - qd[:, (2, 5)])
+  torque[:, wheel_ids] = (
+    base_kd[wheel_ids] * kd_scale[:, wheel_ids] * (target_qd[:, wheel_ids] - qd[:, wheel_ids])
+  )
   torque *= torque_scale
-  limits = action.new_tensor(TORQUE_LIMITS)
   return torch.maximum(torch.minimum(torque, limits), -limits)
 
 
@@ -114,8 +120,11 @@ def policy_vector(
   active_qd: torch.Tensor,
   action: torch.Tensor,
   mode: Mode,
+  *,
+  command_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-  command_scale = command.new_tensor((2.0 if mode == "plane" else 3.0, 0.25, 5.0))
+  if command_scale is None:
+    command_scale = command.new_tensor((2.0 if mode == "plane" else 3.0, 0.25, 5.0))
   return torch.cat(
     (
       ang_vel * 0.25,
@@ -129,12 +138,13 @@ def policy_vector(
   )
 
 
-def add_policy_noise(obs: torch.Tensor) -> torch.Tensor:
-  scales = obs.new_zeros(25)
-  scales[0:3] = 0.05
-  scales[3:6] = 0.05
-  scales[9:13] = 0.02
-  scales[13:19] = 0.075
+def policy_noise_scales(like: torch.Tensor) -> torch.Tensor:
+  return like.new_tensor((0.05,) * 6 + (0.0,) * 3 + (0.02,) * 4 + (0.075,) * 6 + (0.0,) * 6)
+
+
+def add_policy_noise(obs: torch.Tensor, *, scales: torch.Tensor | None = None) -> torch.Tensor:
+  if scales is None:
+    scales = policy_noise_scales(obs)
   return obs + (2.0 * torch.rand_like(obs) - 1.0) * scales
 
 
@@ -188,6 +198,12 @@ class WbrState:
     self.q_adr = robot.indexing.joint_q_adr[self.joint_ids]
     n, dev = self.env.num_envs, self.env.device
     self.raw_default_q = torch.tensor(HOME_ACTIVE_JOINT_POS, device=dev).repeat(n, 1)
+    self.motor_zero = self.raw_default_q.new_tensor(MOTOR_ZERO_RAD)
+    self.gravity = self.raw_default_q.new_tensor((0.0, 0.0, -1.0)).expand(n, -1)
+    self.command_scale = self.raw_default_q.new_tensor(
+      (2.0 if self.mode == "plane" else 3.0, 0.25, 5.0)
+    )
+    self.noise_scales = policy_noise_scales(self.raw_default_q)
     self.kp_scale = torch.ones(n, 6, device=dev)
     self.kd_scale = torch.ones(n, 6, device=dev)
     self.torque_scale = torch.ones(n, 6, device=dev)
@@ -233,10 +249,9 @@ class WbrState:
     self.base_lin_vel = torch.zeros_like(pos)
     root_vadr = self.robot.indexing.free_joint_v_adr
     self.base_ang_vel = self.robot.data.data.qvel[:, root_vadr[3:6]].clone()
-    gravity = pos.new_tensor((0.0, 0.0, -1.0)).repeat(self.env.num_envs, 1)
-    self.projected_gravity = quat_rotate_inverse(quat, gravity)
+    self.projected_gravity = quat_rotate_inverse(quat, self.gravity)
     self.dof_acc = torch.zeros_like(active_q)
-    self.length, self.angle = virtual_leg_geometry(active_q)
+    self.length, self.angle = virtual_leg_geometry(active_q, motor_zero=self.motor_zero)
     self.last_qpos_version = self.env._sim_step_counter
 
   def sample_substep_velocity(self, active_q: torch.Tensor, qpos_version: int) -> torch.Tensor:
@@ -260,10 +275,9 @@ class WbrState:
     self.active_vel = self.sample_substep_velocity(active_q, self.env._sim_step_counter).clone()
     self.base_lin_vel = quat_rotate_inverse(quat, (pos - self.previous_root_pos) / POLICY_DT)
     self.base_ang_vel = ang_vel.clone()
-    gravity = pos.new_tensor((0.0, 0.0, -1.0)).repeat(self.env.num_envs, 1)
-    self.projected_gravity = quat_rotate_inverse(quat, gravity)
+    self.projected_gravity = quat_rotate_inverse(quat, self.gravity)
     self.dof_acc = (self.previous_active_vel - self.active_vel) / POLICY_DT
-    self.length, self.angle = virtual_leg_geometry(active_q)
+    self.length, self.angle = virtual_leg_geometry(active_q, motor_zero=self.motor_zero)
     self.previous_root_pos.copy_(pos)
     self.previous_active_vel.copy_(self.active_vel)
     self._refresh_contacts()
@@ -275,10 +289,12 @@ class WbrState:
       return
     data = self.env.scene["wheel_contact"].data
     force = data.force
-    if force is None:
-      contact = data.found > 0
-    else:
-      contact = force[..., 2] > 1.0
+    contact = data.found > 0
+    if force is not None:
+      # netforce is in world coordinates, with sign set by the primary/secondary
+      # ordering. On this flat terrain, |Fz| is the normal load in either ordering.
+      # Keep the 1 N threshold and require a matched wheel/terrain contact.
+      contact &= force[..., 2].abs() > 1.0
     self.contact_filt, self.in_flight = filtered_flight_state(contact, self.last_contact)
     self.last_contact.copy_(contact)
 
@@ -291,15 +307,14 @@ class WbrState:
     pos, quat, active_q = self._raw()
     root_vadr = self.robot.indexing.free_joint_v_adr
     ang_vel = self.robot.data.data.qvel[:, root_vadr[3:6]]
-    gravity = pos.new_tensor((0.0, 0.0, -1.0)).repeat(self.env.num_envs, 1)
-    length, angle = virtual_leg_geometry(active_q)
+    length, angle = virtual_leg_geometry(active_q, motor_zero=self.motor_zero)
     self.root_pos[env_ids] = pos[env_ids]
     self.root_quat[env_ids] = quat[env_ids]
     self.active_q[env_ids] = active_q[env_ids]
     self.active_vel[env_ids] = 0.0
     self.base_lin_vel[env_ids] = 0.0
     self.base_ang_vel[env_ids] = ang_vel[env_ids]
-    self.projected_gravity[env_ids] = quat_rotate_inverse(quat, gravity)[env_ids]
+    self.projected_gravity[env_ids] = quat_rotate_inverse(quat, self.gravity)[env_ids]
     self.dof_acc[env_ids] = 0.0
     self.length[env_ids] = length[env_ids]
     self.angle[env_ids] = angle[env_ids]
@@ -343,6 +358,7 @@ class HybridAction(ActionTerm):
     super().__init__(cfg, env)
     self.state = get_state(env, cfg.mode)
     self._raw_action = torch.zeros(env.num_envs, 6, device=env.device)
+    self._constants = hybrid_constants(self._raw_action, cfg.mode)
 
   @property
   def action_dim(self) -> int:
@@ -377,6 +393,7 @@ class HybridAction(ActionTerm):
       self.state.kd_scale,
       self.state.torque_scale,
       self.cfg.mode,
+      constants=self._constants,
     )
     self.state.torque.copy_(torque)
     self._entity.set_joint_effort_target(torque, joint_ids=self.state.joint_ids)
@@ -424,6 +441,8 @@ def command(env: ManagerBasedRlEnv) -> torch.Tensor:
 
 def policy_observation(env: ManagerBasedRlEnv, mode: Mode, noisy: bool) -> torch.Tensor:
   state = get_state(env, mode).refresh()
+  if noisy and state.cached_noisy_step == env.common_step_counter:
+    return state.cached_noisy_obs.clone()
   clean = policy_vector(
     state.base_ang_vel,
     state.projected_gravity,
@@ -433,11 +452,12 @@ def policy_observation(env: ManagerBasedRlEnv, mode: Mode, noisy: bool) -> torch
     state.active_vel,
     env.action_manager.action,
     mode,
+    command_scale=state.command_scale,
   )
   if not noisy:
     return clean
   if state.cached_noisy_step != env.common_step_counter:
-    state.cached_noisy_obs.copy_(add_policy_noise(clean))
+    state.cached_noisy_obs.copy_(add_policy_noise(clean, scales=state.noise_scales))
     state.cached_noisy_step = env.common_step_counter
   # ObservationManager clips in-place. Keep the shared noisy frame pristine so the
   # legacy history remains un-clipped while the policy output is clipped to +/-100.
@@ -546,68 +566,8 @@ def reward_term(
   env: ManagerBasedRlEnv, mode: Mode, name: str, weight: float, clip: float
 ) -> torch.Tensor:
   """Evaluate one legacy term, then weight/clip before manager dt scaling."""
-  s = get_state(env, mode).refresh()
-  cmd = command(env)
-  act, prev, prev2 = (
-    env.action_manager.action,
-    env.action_manager.prev_action,
-    env.action_manager.prev_prev_action,
-  )
-  lin_err = (cmd[:, 0] - s.base_lin_vel[:, 0]).square()
-  yaw_err = (cmd[:, 1] - s.base_ang_vel[:, 2]).square()
-  vertical = s.robot.data.data.qvel[:, s.robot.indexing.free_joint_v_adr[2]]
-  terms = {
-    "tracking_lin_vel": lambda: torch.exp(-lin_err / 0.25) * (2.0 if mode == "jump" else 1.0),
-    "tracking_lin_vel_enhance": lambda: (
-      (torch.exp(-lin_err / 2.5) - 1.0) * (2.0 if mode == "jump" else 1.0)
-    ),
-    "tracking_ang_vel": lambda: torch.exp(-yaw_err / 0.25),
-    "tracking_ang_vel_enhance": lambda: torch.exp(-yaw_err / 2.5) - 1.0,
-    "base_height": lambda: torch.exp(-(s.root_pos[:, 2] - cmd[:, 2]).square() / 0.001),
-    "nominal_state": lambda: (
-      (s.angle[:, 0] - s.angle[:, 1]).square()
-      + (10.0 * (s.length[:, 0] - s.length[:, 1]).square() if mode == "jump" else 0.0)
-    ),
-    "lin_vel_z": lambda: s.base_lin_vel[:, 2].square(),
-    "ang_vel_xy": lambda: s.base_ang_vel[:, :2].square().sum(1),
-    "orientation": lambda: s.projected_gravity[:, :2].square().sum(1),
-    "dof_vel": lambda: s.active_vel[:, LEG_IDS].square().sum(1),
-    "dof_acc": lambda: s.dof_acc.square().sum(1),
-    "torques": lambda: s.torque.square().sum(1),
-    "action_rate": lambda: (act - prev).square().sum(1),
-    "action_smooth": lambda: (
-      (act[:, LEG_IDS] - 2.0 * prev[:, LEG_IDS] + prev2[:, LEG_IDS]).square().sum(1)
-    ),
-    "dof_pos_limits": lambda: joint_position_limit_penalty(
-      s.active_q, s.robot.data.soft_joint_pos_limits[:, s.joint_ids]
-    ),
-    "flight": lambda: s.in_flight.float(),
-    "base_height_flight": lambda: (
-      torch.exp(-torch.abs(s.root_pos[:, 2] - 0.65) * 6.0) * s.in_flight
-    ),
-    "leg_tuck": lambda: torch.exp(-torch.abs(s.length - 0.16).sum(1) * 4.0) * s.in_flight,
-    "takeoff_extend": lambda: (
-      torch.exp(-torch.abs(s.length - 0.31).sum(1) * 4.0)
-      * (s.contact_filt.any(1) & (vertical > 0.15))
-    ),
-    "line_z": lambda: vertical.clamp_min(0.0) * s.in_flight,
-    "pen_theta_no0": lambda: s.angle.square().sum(1),
-  }
-  if name == "collision":
-    if mode == "plane":
-      raw = torch.zeros(env.num_envs, device=env.device)
-    else:
-      contact_data = env.scene["penalized_contact"].data
-      hit = torch.linalg.vector_norm(contact_data.force, dim=-1) > 0.1
-      raw = hit.float().sum(1)
-  elif name == "encourage_jump":
-    first_contact = (s.base_air_time > 0.0) & ~s.in_flight
-    s.base_air_time += POLICY_DT * s.root_pos[:, 2].clamp(0.0, 0.5)
-    raw = (s.base_air_time - 5e-5) * first_contact * 0.15 + vertical.clamp_min(0.0) * 0.15
-    s.base_air_time *= ~s.in_flight
-  else:
-    raw = terms[name]()
-  return weighted_clipped_reward(raw, weight, clip)
+  state = get_state(env, mode).refresh()
+  return weighted_clipped_reward(reward_value(state, name), weight, clip)
 
 
 def fallen(env: ManagerBasedRlEnv, mode: Mode) -> torch.Tensor:

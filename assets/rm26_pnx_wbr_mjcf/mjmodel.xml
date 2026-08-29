@@ -1,0 +1,216 @@
+<mujoco model="models">
+  <compiler angle="radian" meshdir="./meshes"/>
+  <!-- Gas springs: SI units (m, N, s).
+       Lmin = 120 mm, Lmax = 195 mm, stroke = 75 mm.
+       The force curve is applied directly by the general actuators below:
+       Conservative 9 MPa curve: F(L) = 250 + 1800*(L - 0.120) N,
+       clipped to 250 to 385 N over the 120 to 195 mm working stroke. -->
+  <size nconmax="200" njmax="200"/>
+
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="base_link.STL"/>
+    <mesh name="llink1" content_type="model/stl" file="llink1.STL"/>
+    <mesh name="llink1_child1" content_type="model/stl" file="llink1_child1.STL"/>
+    <mesh name="lwlink" content_type="model/stl" file="lwlink.STL"/>
+    <mesh name="llink4" content_type="model/stl" file="llink4.STL"/>
+    <mesh name="llink4_child1" content_type="model/stl" file="llink4_child1.STL"/>
+    <mesh name="llink4_child2" content_type="model/stl" file="llink4_child2.STL"/>
+    <mesh name="llink4_child3" content_type="model/stl" file="llink4_child3.STL"/>
+    <mesh name="rlink1" content_type="model/stl" file="rlink1.STL"/>
+    <mesh name="rlink1_child1" content_type="model/stl" file="rlink1_child1.STL"/>
+    <mesh name="rwlink" content_type="model/stl" file="rwlink.STL"/>
+    <mesh name="rlink4" content_type="model/stl" file="rlink4.STL"/>
+    <mesh name="rlink4_child1" content_type="model/stl" file="rlink4_child1.STL"/>
+    <mesh name="rlink4_child2" content_type="model/stl" file="rlink4_child2.STL"/>
+    <mesh name="rlink4_child3" content_type="model/stl" file="rlink4_child3.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link">
+      <freejoint/>
+      <inertial pos="-0.00424 0.00401 0.17298" mass="14"
+        fullinertia="0.42829 0.64062 0.50639 0 0 0"/>
+      <geom type="mesh" rgba="0.92941 0.92941 0.92941 1" mesh="base_link"/>
+      <site name="imu" pos="0 0 0" size="0.005"/>
+      <body name="llink1" pos="-7.222e-05 0.1776 0.116">
+        <inertial pos="-0.10059 -0.0070347 -0.0066739" mass="0.32665" fullinertia="0.00015377 0.0015685 0.0014226 1.4531E-06 -0.00011878 -5.721E-07"/>
+        <joint name="ljoint1" pos="0 0 0" axis="0 -1 0" limited="false"
+          damping="0.2" frictionloss="0" armature="0.03" actuatorfrcrange="-20 20"/>
+        <!-- URDF lspringsite1joint: parent = llink1 -->
+        <site name="lspringsite1" pos="-0.0124237864 -0.0105 -0.0458464778" size="0.006" rgba="0.95 0.55 0.05 1"/>
+        <site name="llink1_site1" pos="-0.0996438 0.008 -0.00843343" size="0.005" rgba="1 1 0 1"/>
+        <geom type="mesh" rgba="0.89804 0.91765 0.92941 1" mesh="llink1"/>
+        <body name="llink1_child1" pos="-0.214234 -0.008 -0.0181319">
+          <inertial pos="0.1117709 0.01700516 -0.04852344" mass="0.239193401395539" fullinertia="0.0004237454 0.002361791 0.001943669 -4.110076E-06 0.0007744541 2.403068E-06"/>
+          <joint name="llink1child1joint" pos="0 0 0" axis="0 -1 0" limited="true" range="-1.09439510 -0.26179938"
+            damping="0.05" frictionloss="0.4" solreflimit="0.001 1" solimplimit="0.99 0.99 0.01"/>
+          <!-- Original URDF point, reparented to the moving llink1_child1. -->
+          <site name="lspringsite2" pos="0.04321618 0.0175 -0.02514666" size="0.006" rgba="0.95 0.55 0.05 1"/>
+          <site name="llink1_site2" pos="-0.0436648 0.0145 0.0411508" size="0.005" rgba="1 1 0 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="llink1_child1"/>
+          <body name="lwlink" pos="0.233282 0.05495 -0.100477">
+            <inertial pos="0.0001294144 -0.01560784 1.511712E-05" mass="0.248106367527013" fullinertia="0.0002156902 0.0003872389 0.0002149108 2.415911E-07 2.294135E-08 6.096467E-09"/>
+            <joint name="lwheel" pos="0 0 0" axis="0 -1 0" damping="0.02" frictionloss="0.19" armature="0.031" actuatorfrcrange="-5.2 5.2"/>
+            <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="lwlink" friction="0.8 0.005 0.0001"/>
+          </body>
+        </body>
+      </body>
+      <body name="llink4" pos="-7.222e-05 0.1906 0.116">
+        <inertial pos="0.036098 -0.0065342 0.0086062" mass="0.065435" fullinertia="1.6416E-05 9.0718E-05 7.9733E-05 -7.167E-06 -1.6005E-05 -1.7087E-06"/>
+        <joint name="ljoint4" pos="0 0 0" axis="0 -1 0" limited="false"
+          damping="0.2" frictionloss="0" armature="0.03" actuatorfrcrange="-40 40"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="llink4"/>
+        <body name="llink4_child1" pos="0.0972737 0 0.023191">
+          <inertial pos="-0.044207 -0.0155 -0.03917915" mass="0.0343504460745115" fullinertia="2.649209E-05 5.927163E-05 3.335204E-05 0 -2.833944E-05 0"/>
+          <joint name="llink4child1joint" pos="0 0 0" axis="0 -1 0" range="-3.1416 3.1416" damping="0.02" frictionloss="0.15"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="llink4_child1"/>
+          <body name="llink4_child2" pos="-0.088414 -0.0155 -0.0783583">
+            <inertial pos="-0.07104166 0.0105 0.03411362" mass="0.0581710112657767" fullinertia="5.092828E-05 0.0002088459 0.0001582666 0 8.001763E-05 0"/>
+            <joint name="llink4child2joint" pos="0 0 0" axis="0 -1 0" range="-3.1416 3.1416" damping="0.02" frictionloss="0.15"/>
+            <site name="llink4_site1" pos="-0.108503 0.0105 0.0467339" size="0.005" rgba="1 0 0 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="llink4_child2"/>
+            <body name="llink4_child3" pos="-0.152168 0.0135 0.0878846">
+              <inertial pos="-0.05729516 -0.0135 -0.004849221" mass="0.0356582479332101" fullinertia="1.906389E-06 5.903595E-05 5.772386E-05 0 -4.758241E-06 0"/>
+              <joint name="llink4child3joint" pos="0 0 0" axis="0 -1 0" range="-3.1416 3.1416" damping="0.02" frictionloss="0.15"/>
+              <site name="llink4_site2" pos="-0.11459 -0.0045 -0.00969844" size="0.005" rgba="1 0 0 1"/>
+              <geom type="mesh" rgba="1 1 1 1" mesh="llink4_child3"/>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="rlink1" pos="-7.222e-05 -0.1776 0.116">
+        <inertial pos="-0.10059 0.0070347 -0.0066739" mass="0.32665" fullinertia="0.00015377 0.0015685 0.0014226 -1.4531E-06 -0.00011878 5.721E-07"/>
+        <joint name="rjoint1" pos="0 0 0" axis="0 1 0" limited="false"
+          damping="0.2" frictionloss="0" armature="0.03" actuatorfrcrange="-20 20"/>
+        <!-- URDF rspringsite1joint: parent = rlink1 -->
+        <site name="rspringsite1" pos="-0.0124237864 0.0105 -0.0458464778" size="0.006" rgba="0.95 0.55 0.05 1"/>
+        <site name="rlink1_site1" pos="-0.0996438 -0.008 -0.00843343" size="0.005" rgba="1 1 0 1"/>
+        <geom type="mesh" rgba="0.89804 0.91765 0.92941 1" mesh="rlink1"/>
+        <body name="rlink1_child1" pos="-0.214234 -0.0175 -0.0181319">
+          <inertial pos="0.1117709 0.008494837 -0.04852344" mass="0.239193401395539" fullinertia="0.0004237454 0.002361791 0.001943669 4.110076E-06 0.0007744541 -2.403068E-06"/>
+          <joint name="rlink1child1joint" pos="0 0 0" axis="0 1 0" limited="true" range="0.26179938 1.09439510"
+            damping="0.05" frictionloss="0.4" solreflimit="0.001 1" solimplimit="0.99 0.99 0.01"/>
+          <!-- Original URDF point, reparented to the moving rlink1_child1. -->
+          <site name="rspringsite2" pos="0.04321400 0.008 -0.02514710" size="0.006" rgba="0.95 0.55 0.05 1"/>
+          <site name="rlink1_site2" pos="-0.0436648 0.011 0.0411508" size="0.005" rgba="1 1 0 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="rlink1_child1"/>
+          <body name="rwlink" pos="0.233282 -0.02945 -0.100477">
+            <inertial pos="0.0001294142 0.01560784 1.511721E-05" mass="0.248106347100355" fullinertia="0.0002156902 0.0003872389 0.0002149108 -2.415902E-07 2.294301E-08 -6.098415E-09"/>
+            <joint name="rwheel" pos="0 0 0" axis="0 1 0" damping="0.02" frictionloss="0.19" armature="0.031" actuatorfrcrange="-5.2 5.2"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="rwlink" friction="0.8 0.005 0.0001"/>
+          </body>
+        </body>
+      </body>
+      <body name="rlink4" pos="-7.222e-05 -0.1906 0.116">
+        <inertial pos="0.036098 0.0065342 0.0086062" mass="0.065435" fullinertia="1.6416E-05 9.0718E-05 7.9733E-05 7.167E-06 -1.6005E-05 1.7087E-06"/>
+        <joint name="rjoint4" pos="0 0 0" axis="0 1 0" limited="false"
+          damping="0.2" frictionloss="0" armature="0.03" actuatorfrcrange="-20 20"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="rlink4"/>
+        <body name="rlink4_child1" pos="0.0972737 0.019 0.023191">
+          <inertial pos="-0.044207 -0.0035 -0.03917915" mass="0.0343504460745115" fullinertia="2.649209E-05 5.927163E-05 3.335204E-05 0 -2.833944E-05 0"/>
+          <joint name="rlink4child1joint" pos="0 0 0" axis="0 1 0" range="-3.1416 3.1416" damping="0.02" frictionloss="0.15"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="rlink4_child1"/>
+          <body name="rlink4_child2" pos="-0.088414 -0.014 -0.0783583">
+            <inertial pos="-0.07104166 0 0.03411362" mass="0.0581710112657768" fullinertia="5.092828E-05 0.0002088459 0.0001582666 0 8.001763E-05 0"/>
+            <joint name="rlink4child2joint" pos="0 0 0" axis="0 1 0" range="-3.1416 3.1416" damping="0.02" frictionloss="0.15"/>
+            <site name="rlink4_site1" pos="-0.108503 0 0.0467339" size="0.005" rgba="1 0 0 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="rlink4_child2"/>
+            <body name="rlink4_child3" pos="-0.152168 0.0105 0.0878846">
+              <inertial pos="-0.05729516 0 -0.004849221" mass="0.0356582479332101" fullinertia="1.906389E-06 5.903595E-05 5.772386E-05 0 -4.758241E-06 0"/>
+              <joint name="rlink4child3joint" pos="0 0 0" axis="0 1 0" range="-3.1416 3.1416" damping="0.02" frictionloss="0.15"/>
+              <site name="rlink4_site2" pos="-0.11459 -0.009 -0.00969844" size="0.005" rgba="1 0 0 1"/>
+              <geom type="mesh" rgba="1 1 1 1" mesh="rlink4_child3"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <equality>
+    <connect name="Left_loop1" site1="llink4_site1" site2="llink1_site1" solref="0.001 1" solimp="0.99 0.99 0.01 0.5 2"/>
+    <connect name="Left_loop2" site1="llink4_site2" site2="llink1_site2" solref="0.001 1" solimp="0.99 0.99 0.01 0.5 2"/>
+    <connect name="Right_loop1" site1="rlink4_site1" site2="rlink1_site1" solref="0.001 1" solimp="0.99 0.99 0.01 0.5 2"/>
+    <connect name="Right_loop2" site1="rlink4_site2" site2="rlink1_site2" solref="0.001 1" solimp="0.99 0.99 0.01 0.5 2"/>
+  </equality>
+
+  <!-- Spatial tendons provide the changing distance between the URDF sites.
+       Their force is supplied by the length-dependent general actuators,
+       so the force increases with extension as in the catalogue curve. -->
+  <tendon>
+    <spatial name="left_gas_spring" limited="true" range="0.120 0.195"
+      solreflimit="0.005 1" solimplimit="0.95 0.99 0.01" width="0.006" rgba="0.95 0.55 0.05 1">
+      <site site="lspringsite1"/>
+      <site site="lspringsite2"/>
+    </spatial>
+    <spatial name="right_gas_spring" limited="true" range="0.120 0.195"
+      solreflimit="0.005 1" solimplimit="0.95 0.99 0.01" width="0.006" rgba="0.95 0.55 0.05 1">
+      <site site="rspringsite1"/>
+      <site site="rspringsite2"/>
+    </spatial>
+  </tendon>
+
+  <sensor>
+    <framequat name="imu_quat" objtype="site" objname="imu"/>
+    <accelerometer name="imu_accel" site="imu"/>
+    <gyro name="imu_gyro" site="imu"/>
+
+    <jointpos name="ljoint1_pos" joint="ljoint1"/>
+    <jointpos name="ljoint4_pos" joint="ljoint4"/>
+    <jointpos name="lwheel_pos" joint="lwheel"/>
+    <jointpos name="rjoint1_pos" joint="rjoint1"/>
+    <jointpos name="rjoint4_pos" joint="rjoint4"/>
+    <jointpos name="rwheel_pos" joint="rwheel"/>
+
+    <jointvel name="ljoint1_vel" joint="ljoint1"/>
+    <jointvel name="ljoint4_vel" joint="ljoint4"/>
+    <jointvel name="lwheel_vel" joint="lwheel"/>
+    <jointvel name="rjoint1_vel" joint="rjoint1"/>
+    <jointvel name="rjoint4_vel" joint="rjoint4"/>
+    <jointvel name="rwheel_vel" joint="rwheel"/>
+
+    <tendonpos name="left_gas_spring_length" tendon="left_gas_spring"/>
+    <tendonpos name="right_gas_spring_length" tendon="right_gas_spring"/>
+    <tendonvel name="left_gas_spring_velocity" tendon="left_gas_spring"/>
+    <tendonvel name="right_gas_spring_velocity" tendon="right_gas_spring"/>
+
+    <actuatorfrc name="ljoint1_tor" actuator="ljoint1_actuator"/>
+    <actuatorfrc name="ljoint4_tor" actuator="ljoint4_actuator"/>
+    <actuatorfrc name="lwheel_tor" actuator="lwheel_actuator"/>
+    <actuatorfrc name="rjoint1_tor" actuator="rjoint1_actuator"/>
+    <actuatorfrc name="rjoint4_tor" actuator="rjoint4_actuator"/>
+    <actuatorfrc name="rwheel_tor" actuator="rwheel_actuator"/>
+    <actuatorfrc name="left_gas_spring_force" actuator="left_gas_spring_actuator"/>
+    <actuatorfrc name="right_gas_spring_force" actuator="right_gas_spring_actuator"/>
+  </sensor>
+
+  <actuator>
+    <!-- DM-J8009P rated 20 Nm / peak 40 Nm -->
+    <motor name="ljoint1_actuator" joint="ljoint1" gear="1" ctrlrange="-20 20" ctrllimited="true" forcerange="-20 20" forcelimited="true"/>
+    <motor name="ljoint4_actuator" joint="ljoint4" gear="1" ctrlrange="-20 20" ctrllimited="true" forcerange="-20 20" forcelimited="true"/>
+    <!-- wheel motor + C620, 15.76:1, rated 2.52 Nm / peak 5.2 Nm at output -->
+    <motor name="lwheel_actuator" joint="lwheel" gear="1" ctrlrange="-5.2 5.2" ctrllimited="true" forcerange="-5.2 5.2" forcelimited="true"/>
+    <motor name="rjoint1_actuator" joint="rjoint1" gear="1" ctrlrange="-20 20" ctrllimited="true" forcerange="-20 20" forcelimited="true"/>
+    <motor name="rjoint4_actuator" joint="rjoint4" gear="1" ctrlrange="-20 20" ctrllimited="true" forcerange="-20 20" forcelimited="true"/>
+    <motor name="rwheel_actuator" joint="rwheel" gear="1" ctrlrange="-5.2 5.2" ctrllimited="true" forcerange="-5.2 5.2" forcelimited="true"/>
+    <!-- F(L) = 250 + 1800*(L - 0.120) N, with damping -4*Ldot. -->
+    <general name="left_gas_spring_actuator" tendon="left_gas_spring"
+      gaintype="fixed" gainprm="0" biastype="affine" biasprm="34 1800 -4"
+      forcelimited="true" forcerange="250 385"/>
+    <general name="right_gas_spring_actuator" tendon="right_gas_spring"
+      gaintype="fixed" gainprm="0" biastype="affine" biasprm="34 1800 -4"
+      forcelimited="true" forcerange="250 385"/>
+    <!-- F(L) = 450 + 1800*(L - 0.120) N, with damping -4*Ldot. -->
+    <!-- <general name="left_gas_spring_actuator" tendon="left_gas_spring"
+      gaintype="fixed" gainprm="0" biastype="affine" biasprm="234 1800 -4"
+      forcelimited="true" forcerange="450 585"/> -->
+    <!-- <general name="right_gas_spring_actuator" tendon="right_gas_spring"
+      gaintype="fixed" gainprm="0" biastype="affine" biasprm="234 1800 -4"
+      forcelimited="true" forcerange="450 585"/> -->
+  </actuator>
+
+  <keyframe>
+    <key name="home"
+      qpos="-10.00424 0.00401 -1.17298 1 0 0 0  -0.750000 -1.090000 0.000000 -2.250000 1.090000 -0.617000 1.090000  0.750000 1.090000 0.000000 2.250000 -1.090000 0.617000 -1.090000"/>
+  </keyframe>
+</mujoco>

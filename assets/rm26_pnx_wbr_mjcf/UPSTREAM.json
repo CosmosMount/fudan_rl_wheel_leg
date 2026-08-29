@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/CosmosMount/rm26_pnx_wbr_mjcf",
+  "commit": "9c09472d3b714dbc0d7e8bacf9ac4bcafc31fd25",
+  "sha256": {
+    "mjmodel.xml": "37fcedfbf8c47fd29a153beeffd93d406b7e6b3025feb7b28c6988169e3d2118",
+    "meshes/base_link.STL": "d86e9b71889ec28da062d99219bcb1f72be81645c6274cd9126b3ac7bb14ee4f",
+    "meshes/llink1.STL": "e8d70979f21cd3835a2e1e16771d0a5d0e9c9a8fea9d0567e222cd388572a9a7",
+    "meshes/llink1_child1.STL": "e054630bbcb4fd2469fa001454bc9250f2b48fc8c6ea8c2e6d7114cd5b452d7e",
+    "meshes/lwlink.STL": "c052ad70251ef8d31029c3d429b4ffb52c0917a7aab119de1ee3ce7f8c03b6bb",
+    "meshes/llink4.STL": "2b39c34a61ee4d32c6bee00c365439529cfab3bfb238f419f964a45d5078ceba",
+    "meshes/llink4_child1.STL": "0183dd95b6eff20e7c241d3e0f7680521a2d7f27b19ac1bc6e9c81d0ddf09195",
+    "meshes/llink4_child2.STL": "bcf08816f9c5c89f372ce4e487c8b165a57fd5283a4bab245c0409bcc5c623e4",
+    "meshes/llink4_child3.STL": "0870321afe65174241ace87ea5a20451098ff96e1d695bfb3031ab36cec18a21",
+    "meshes/rlink1.STL": "a3d6a31c01623fe5e2c1bfbb68de5084925da01842e50009b2b5fc24f43b7ff5",
+    "meshes/rlink1_child1.STL": "bee2ea8d113b227cdccfb55d29c73f9eb6fa2972f26c437a2b226c610febd0b0",
+    "meshes/rwlink.STL": "a8db2cf6681c21c3459a256ac83e1e0d3ef3481a58244254d1c934c543688ff4",
+    "meshes/rlink4.STL": "6dd5b36688114868c0c39d58089a1b350e228faa2d2dcb3c66a0f50595cbec13",
+    "meshes/rlink4_child1.STL": "87dc76222e4500634a3262a21c9dd3bbccb027da9e01cd66fcdd72edd7fb568c",
+    "meshes/rlink4_child2.STL": "4eb484b740850512b854bf8d4ffb83473d5bcbbea39f3c58bc836d514f11df27",
+    "meshes/rlink4_child3.STL": "3d1f72a5707e86a6050a6102ab0f1192fb083283a9350dba0b501d7d74f26424"
+  }
+}

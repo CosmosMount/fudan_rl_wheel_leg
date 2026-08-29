@@ -15,6 +15,10 @@ dependencies = [
 
 [project.scripts]
 export-wbr-policy = "wbr_mjlab.rl:export_main"
+sim2sim-wbr = "wbr_mjlab.sim2sim:main"
+
+[project.optional-dependencies]
+sim2sim = ["onnxruntime>=1.19.0,<1.24"]
 
 [project.entry-points."mjlab.tasks"]
 wbr_mjlab = "wbr_mjlab"
@@ -33,7 +37,7 @@ constraint-dependencies = ["lxml>=6.0.0"]
 packages = ["src/wbr_mjlab"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"assets/wbr.xml" = "wbr_mjlab/assets/wbr.xml"
+"assets/rm26_pnx_wbr_mjcf" = "wbr_mjlab/assets/rm26_pnx_wbr_mjcf"
 
 [tool.ruff]
 src = ["src", "tests"]

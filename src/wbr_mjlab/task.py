@@ -18,45 +18,8 @@ from mjlab.viewer import ViewerConfig
 
 from . import mdp
 from .mdp import HybridActionCfg, WbrCommandCfg
+from .rewards import JUMP_REWARDS, PLANE_REWARDS
 from .robot import PENALIZED_COLLISION_GEOM_NAMES, WHEEL_GEOM_NAMES, get_wbr_robot_cfg
-
-PLANE_REWARDS = (
-  ("tracking_lin_vel", 1.0),
-  ("tracking_lin_vel_enhance", 1.0),
-  ("tracking_ang_vel", 1.0),
-  ("tracking_ang_vel_enhance", 1.0),
-  ("base_height", 1.0),
-  ("nominal_state", -1.0),
-  ("lin_vel_z", -1.0),
-  ("ang_vel_xy", -0.2),
-  ("orientation", -100.0),
-  ("dof_vel", -5e-5),
-  ("dof_acc", -2.5e-7),
-  ("torques", -1e-4),
-  ("action_rate", -0.01),
-  ("action_smooth", -0.01),
-  ("collision", -1.0),
-  ("dof_pos_limits", -1.0),
-)
-
-JUMP_REWARDS = (
-  ("tracking_lin_vel", 1.0),
-  ("tracking_lin_vel_enhance", 1.0),
-  ("tracking_ang_vel", 1.0),
-  ("flight", 0.15),
-  ("encourage_jump", 1.0),
-  ("base_height_flight", 6.0),
-  ("leg_tuck", 1.7),
-  ("takeoff_extend", 0.5),
-  ("line_z", 6.0),
-  ("pen_theta_no0", -2.0),
-  ("action_rate", -0.04),
-  ("torques", -5e-5),
-  ("orientation", -25.0),
-  ("ang_vel_xy", -0.1),
-  ("nominal_state", -1.0),
-  ("collision", -1.0),
-)
 
 
 def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -65,26 +28,21 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
   num_envs = 1 if play else (8192 if is_plane else 4096)
   rewards = PLANE_REWARDS if is_plane else JUMP_REWARDS
   clip = 1.0 if is_plane else 2.5
+
+  def policy_frame(**kwargs) -> ObservationTermCfg:
+    return ObservationTermCfg(
+      func=mdp.policy_observation,
+      params={"mode": mode, "noisy": not play},
+      **kwargs,
+    )
+
   observations = {
     "policy": ObservationGroupCfg(
-      {
-        "frame": ObservationTermCfg(
-          func=mdp.policy_observation,
-          params={"mode": mode, "noisy": not play},
-          clip=(-100.0, 100.0),
-        )
-      },
+      {"frame": policy_frame(clip=(-100.0, 100.0))},
       enable_corruption=False,
     ),
     "history": ObservationGroupCfg(
-      {
-        "frame": ObservationTermCfg(
-          func=mdp.policy_observation,
-          params={"mode": mode, "noisy": not play},
-          history_length=5,
-          flatten_history_dim=True,
-        )
-      },
+      {"frame": policy_frame(history_length=5, flatten_history_dim=True)},
       enable_corruption=False,
     ),
     "critic": ObservationGroupCfg(

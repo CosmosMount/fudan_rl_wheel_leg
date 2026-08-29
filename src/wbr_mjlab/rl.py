@@ -135,50 +135,27 @@ class SequencePPO:
     critic: SequenceCritic,
     storage: RolloutStorage,
     *,
-    num_learning_epochs: int = 5,
-    num_mini_batches: int = 4,
-    clip_param: float = 0.2,
-    gamma: float = 0.99,
-    lam: float = 0.95,
-    value_loss_coef: float = 1.0,
-    entropy_coef: float = 0.01,
-    learning_rate: float = 1e-3,
-    encoder_learning_rate: float = 1e-3,
-    max_grad_norm: float = 1.0,
-    encoder_max_grad_norm: float = 0.1,
-    use_clipped_value_loss: bool = True,
-    schedule: str = "adaptive",
-    desired_kl: float = 0.005,
     device: str = "cpu",
     multi_gpu_cfg: dict | None = None,
-    **_: Any,
+    **algorithm_cfg: Any,
   ) -> None:
+    self.cfg = SequencePpoCfg(**algorithm_cfg)
     self.device = device
     self.policy = policy.to(device)
     self.actor = self.policy
     self.critic = critic.to(device)
     self.storage = storage
     self.transition = RolloutStorage.Transition()
-    self.optimizer = torch.optim.Adam(
-      [*self.policy.actor.parameters(), self.policy.std, *self.critic.parameters()],
-      lr=learning_rate,
-    )
+    self._ppo_parameters = [
+      *self.policy.actor.parameters(),
+      self.policy.std,
+      *self.critic.parameters(),
+    ]
+    self.optimizer = torch.optim.Adam(self._ppo_parameters, lr=self.cfg.learning_rate)
     self.encoder_optimizer = torch.optim.Adam(
-      self.policy.encoder.parameters(), lr=encoder_learning_rate
+      self.policy.encoder.parameters(), lr=self.cfg.encoder_learning_rate
     )
-    self.num_learning_epochs = num_learning_epochs
-    self.num_mini_batches = num_mini_batches
-    self.clip_param = clip_param
-    self.gamma = gamma
-    self.lam = lam
-    self.value_loss_coef = value_loss_coef
-    self.entropy_coef = entropy_coef
-    self.learning_rate = learning_rate
-    self.max_grad_norm = max_grad_norm
-    self.encoder_max_grad_norm = encoder_max_grad_norm
-    self.use_clipped_value_loss = use_clipped_value_loss
-    self.schedule = schedule
-    self.desired_kl = desired_kl
+    self.learning_rate = self.cfg.learning_rate
     self.rnd = None
     self.intrinsic_rewards = None
     self.is_multi_gpu = multi_gpu_cfg is not None
@@ -191,17 +168,13 @@ class SequencePPO:
     storage = RolloutStorage(
       "rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device
     )
-    alg_cfg = dict(cfg["algorithm"])
-    alg_cfg.pop("class_name", None)
-    alg_cfg.pop("rnd_cfg", None)
-    alg_cfg.pop("share_cnn_encoders", None)
     return SequencePPO(
       policy,
       critic,
       storage,
       device=device,
       multi_gpu_cfg=cfg.get("multi_gpu"),
-      **alg_cfg,
+      **cfg["algorithm"],
     )
 
   def _distribution(self, obs: TensorDict) -> Normal:
@@ -233,7 +206,7 @@ class SequencePPO:
     self.transition.rewards = rewards.clone()
     self.transition.dones = dones
     if "time_outs" in extras:
-      self.transition.rewards += self.gamma * torch.squeeze(
+      self.transition.rewards += self.cfg.gamma * torch.squeeze(
         self.transition.values * extras["time_outs"].unsqueeze(1).to(self.device), 1
       )
     self.storage.add_transition(self.transition)
@@ -246,8 +219,8 @@ class SequencePPO:
     for step in reversed(range(st.num_transitions_per_env)):
       next_values = last_values if step == st.num_transitions_per_env - 1 else st.values[step + 1]
       alive = 1.0 - st.dones[step].float()
-      delta = st.rewards[step] + alive * self.gamma * next_values - st.values[step]
-      advantage = delta + alive * self.gamma * self.lam * advantage
+      delta = st.rewards[step] + alive * self.cfg.gamma * next_values - st.values[step]
+      advantage = delta + alive * self.cfg.gamma * self.cfg.lam * advantage
       st.returns[step] = advantage + st.values[step]
     st.advantages = st.returns - st.values
     st.advantages = (st.advantages - st.advantages.mean()) / (st.advantages.std() + 1e-8)
@@ -255,7 +228,7 @@ class SequencePPO:
   def _adapt_learning_rate(
     self, old_mean: torch.Tensor, old_std: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
   ) -> None:
-    if self.schedule != "adaptive" or self.desired_kl is None:
+    if self.cfg.schedule != "adaptive" or self.cfg.desired_kl is None:
       return
     with torch.no_grad():
       kl = (
@@ -264,16 +237,18 @@ class SequencePPO:
         - 0.5
       )
       kl_mean = kl.sum(-1).mean()
-      if kl_mean > 2.0 * self.desired_kl:
+      if kl_mean > 2.0 * self.cfg.desired_kl:
         self.learning_rate = max(1e-5, self.learning_rate / 1.5)
-      elif 0.0 < kl_mean < 0.5 * self.desired_kl:
+      elif 0.0 < kl_mean < 0.5 * self.cfg.desired_kl:
         self.learning_rate = min(1e-2, self.learning_rate * 1.5)
       for group in self.optimizer.param_groups:
         group["lr"] = self.learning_rate
 
   def ppo_update(self) -> dict[str, float]:
     totals = {"value": 0.0, "surrogate": 0.0, "entropy": 0.0}
-    generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
+    generator = self.storage.mini_batch_generator(
+      self.cfg.num_mini_batches, self.cfg.num_learning_epochs
+    )
     for batch in generator:
       assert batch.observations is not None
       dist = self._distribution(batch.observations)
@@ -284,11 +259,11 @@ class SequencePPO:
       ratio = torch.exp(log_prob - batch.old_actions_log_prob.squeeze(-1))
       advantage = batch.advantages.squeeze(-1)
       surrogate = -advantage * ratio
-      clipped = -advantage * ratio.clamp(1.0 - self.clip_param, 1.0 + self.clip_param)
+      clipped = -advantage * ratio.clamp(1.0 - self.cfg.clip_param, 1.0 + self.cfg.clip_param)
       surrogate_loss = torch.maximum(surrogate, clipped).mean()
-      if self.use_clipped_value_loss:
+      if self.cfg.use_clipped_value_loss:
         value_clipped = batch.values + (values - batch.values).clamp(
-          -self.clip_param, self.clip_param
+          -self.cfg.clip_param, self.cfg.clip_param
         )
         value_loss = torch.maximum(
           (values - batch.returns).square(), (value_clipped - batch.returns).square()
@@ -296,24 +271,28 @@ class SequencePPO:
       else:
         value_loss = (values - batch.returns).square().mean()
       entropy = dist.entropy().sum(-1).mean()
-      loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy
+      loss = (
+        surrogate_loss + self.cfg.value_loss_coef * value_loss - self.cfg.entropy_coef * entropy
+      )
       self.optimizer.zero_grad()
       loss.backward()
       self.reduce_parameters()
       nn.utils.clip_grad_norm_(
-        [*self.policy.actor.parameters(), self.policy.std, *self.critic.parameters()],
-        self.max_grad_norm,
+        self._ppo_parameters,
+        self.cfg.max_grad_norm,
       )
       self.optimizer.step()
       totals["value"] += value_loss.item()
       totals["surrogate"] += surrogate_loss.item()
       totals["entropy"] += entropy.item()
-    count = self.num_learning_epochs * self.num_mini_batches
+    count = self.cfg.num_learning_epochs * self.cfg.num_mini_batches
     return {key: value / count for key, value in totals.items()}
 
   def auxiliary_update(self) -> float:
     total = 0.0
-    generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
+    generator = self.storage.mini_batch_generator(
+      self.cfg.num_mini_batches, self.cfg.num_learning_epochs
+    )
     for batch in generator:
       assert batch.observations is not None
       prediction = self.policy.encoder(batch.observations["history"])
@@ -322,10 +301,10 @@ class SequencePPO:
       self.encoder_optimizer.zero_grad()
       loss.backward()
       self.reduce_parameters()
-      nn.utils.clip_grad_norm_(self.policy.encoder.parameters(), self.encoder_max_grad_norm)
+      nn.utils.clip_grad_norm_(self.policy.encoder.parameters(), self.cfg.encoder_max_grad_norm)
       self.encoder_optimizer.step()
       total += loss.item()
-    return total / (self.num_learning_epochs * self.num_mini_batches)
+    return total / (self.cfg.num_learning_epochs * self.cfg.num_mini_batches)
 
   def update(self) -> dict[str, float]:
     losses = self.ppo_update()
@@ -422,10 +401,13 @@ class SequenceRunner(MjlabOnPolicyRunner):
   ) -> None:
     output = Path(path) / filename
     output.parent.mkdir(parents=True, exist_ok=True)
-    export_onnx(self.alg.get_policy(), output, verbose=verbose)
+    mode = self.env.unwrapped.cfg.actions["hybrid"].mode
+    export_onnx(self.alg.get_policy(), output, verbose=verbose, mode=mode)
 
 
-def export_onnx(policy: SequencePolicy, output: Path, verbose: bool = False) -> None:
+def export_onnx(
+  policy: SequencePolicy, output: Path, verbose: bool = False, *, mode: str | None = None
+) -> None:
   model = copy.deepcopy(policy.as_onnx()).cpu().eval()
   torch.onnx.export(
     model,
@@ -439,6 +421,17 @@ def export_onnx(policy: SequencePolicy, output: Path, verbose: bool = False) -> 
     dynamic_axes={"obs": {0: "batch"}, "obs_history": {0: "batch"}, "actions": {0: "batch"}},
     dynamo=False,
   )
+  if mode is not None:
+    import json
+
+    import onnx
+
+    from .sim2sim import METADATA_KEY, policy_contract
+
+    exported = onnx.load(str(output))
+    onnx.helper.set_model_props(exported, {METADATA_KEY: json.dumps(policy_contract(mode))})
+    onnx.checker.check_model(exported)
+    onnx.save(exported, str(output))
 
 
 def export_main() -> None:
@@ -448,13 +441,33 @@ def export_main() -> None:
   )
   parser.add_argument("--checkpoint", required=True, type=Path)
   parser.add_argument("--output", required=True, type=Path)
+  parser.add_argument("--verify", action="store_true", help="Compare ONNX and Torch on fixed random inputs")
   args = parser.parse_args()
-  del args.task
+  mode = "plane" if args.task == "Mjlab-Velocity-Flat-WBR" else "jump"
   checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
   policy = SequencePolicy()
   policy.load_state_dict(checkpoint["policy_state_dict"])
   args.output.parent.mkdir(parents=True, exist_ok=True)
-  export_onnx(policy, args.output)
+  export_onnx(policy, args.output, mode=mode)
+  print(f"Exported {mode} policy: {args.output}")
+  if args.verify:
+    import numpy as np
+
+    from .sim2sim import OnnxPolicy
+
+    deployed = OnnxPolicy(args.output, mode)
+    generator = torch.Generator().manual_seed(17)
+    model = policy.as_onnx().eval()
+    max_error = 0.0
+    with torch.inference_mode():
+      for _ in range(64):
+        obs = torch.randn(1, 25, generator=generator)
+        history = torch.randn(1, 125, generator=generator)
+        expected = model(obs, history)[0].clamp(-100, 100).numpy()
+        actual = deployed(obs.numpy(), history.numpy())
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+        max_error = max(max_error, float(np.abs(actual - expected).max()))
+    print(f"ONNX verification passed (64 inputs, max absolute error {max_error:.3g})")
 
 
 __all__ = [
@@ -464,3 +477,7 @@ __all__ = [
   "export_onnx",
   "sequence_runner_cfg",
 ]
+
+
+if __name__ == "__main__":
+  export_main()
