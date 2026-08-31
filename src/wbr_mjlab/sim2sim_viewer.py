@@ -11,6 +11,11 @@ import numpy as np
 from .robot import POLICY_DT
 
 
+def _next_policy_deadline(current: float, finished: float) -> float:
+  scheduled = current + POLICY_DT
+  return finished + POLICY_DT if finished > scheduled else scheduled
+
+
 def install_callbacks(window, model, camera, keyboard) -> None:
   """Keep callbacks testable without a GL context; use the installed MuJoCo API."""
   mouse = np.array(glfw.get_cursor_pos(window))
@@ -36,10 +41,10 @@ def install_callbacks(window, model, camera, keyboard) -> None:
   glfw.set_scroll_callback(window, scroll_callback)
 
 
-def run_viewer(runner, keyboard) -> None:
+def run_viewer(runner, keyboard, *, backend_name: str = "ONNX") -> None:
   if not glfw.init():
     raise RuntimeError("GLFW could not open a display; use --headless over SSH")
-  window = glfw.create_window(1280, 800, "WBR | MuJoCo + ONNX", None, None)
+  window = glfw.create_window(1280, 800, f"WBR | MuJoCo + {backend_name}", None, None)
   if not window:
     glfw.terminate()
     raise RuntimeError("Could not create MuJoCo OpenGL window")
@@ -74,11 +79,11 @@ def run_viewer(runner, keyboard) -> None:
         next_step = now
       elif now >= next_step:
         runner.step(keyboard.command(), enabled=keyboard.enabled)
-        next_step += POLICY_DT
-        # A slow computer runs simulation slower, never increases physics dt or
-        # skips controller updates. Avoid an unbounded catch-up after a stall.
-        if now - next_step > 0.1:
-          next_step = time.perf_counter()
+        finished = time.perf_counter()
+        # A slow inference runs simulation slower; do not skip controller updates or
+        # issue back-to-back USB requests to catch up with an expired wall-clock target.
+        next_step = _next_policy_deadline(next_step, finished)
+        now = finished
       if now >= next_frame:
         width, height = glfw.get_framebuffer_size(window)
         if width > 0 and height > 0:
@@ -90,7 +95,9 @@ def run_viewer(runner, keyboard) -> None:
           mujoco.mjr_render(viewport, scene, context)
           command = keyboard.command()
           state = (
-            "PAUSED" if keyboard.paused else ("ONNX ENABLED" if keyboard.enabled else "MOTORS OFF")
+            "PAUSED"
+            if keyboard.paused
+            else (f"{backend_name} ENABLED" if keyboard.enabled else "MOTORS OFF")
           )
           status = (
             f"{runner.mode} | {state} | t={data.time:.2f}s\n"

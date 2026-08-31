@@ -16,9 +16,11 @@ dependencies = [
 [project.scripts]
 export-wbr-policy = "wbr_mjlab.rl:export_main"
 sim2sim-wbr = "wbr_mjlab.sim2sim:main"
+sim2hil-wbr = "wbr_mjlab.hil.cli:main"
 
 [project.optional-dependencies]
 sim2sim = ["onnxruntime>=1.19.0,<1.24"]
+hil = ["pyserial>=3.5,<4"]
 
 [project.entry-points."mjlab.tasks"]
 wbr_mjlab = "wbr_mjlab"

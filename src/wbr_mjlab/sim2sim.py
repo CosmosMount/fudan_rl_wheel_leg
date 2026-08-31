@@ -227,8 +227,27 @@ class NativeRunner:
 
   def step(self, command: np.ndarray, *, enabled: bool = True) -> None:
     if enabled:
-      self.action = np.asarray(self.policy(*self.observe(command)), dtype=np.float32)
+      # Observation history is part of the policy transaction. A failed external
+      # backend (notably USB HIL) must neither consume a history frame nor leave the
+      # previously applied action armed for a later retry.
+      previous_history = None if self.history is None else self.history.copy()
+      previous_obs = self.last_obs.copy()
+      try:
+        next_action = np.asarray(self.policy(*self.observe(command)), dtype=np.float32)
+      except BaseException:
+        self.history = previous_history
+        self.last_obs = previous_obs
+        self.action.fill(0)
+        self.torque.fill(0)
+        self.data.ctrl[:] = 0
+        raise
+      self.action = next_action
       if self.action.shape != (6,) or not np.isfinite(self.action).all():
+        self.history = previous_history
+        self.last_obs = previous_obs
+        self.action = np.zeros(6, dtype=np.float32)
+        self.torque.fill(0)
+        self.data.ctrl[:] = 0
         raise FloatingPointError("Invalid policy action")
       self.action = np.clip(self.action, -100.0, 100.0)
     else:

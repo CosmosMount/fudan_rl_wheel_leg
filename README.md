@@ -9,7 +9,7 @@ micromamba `wbr` 环境，不创建项目内 `.venv`：
 
 ```bash
 micromamba activate wbr
-python -m pip install --no-deps --no-build-isolation -e .
+python -m pip install --no-deps -e .
 train Mjlab-Velocity-Flat-WBR
 train Mjlab-Jump-Flat-WBR
 play Mjlab-Velocity-Flat-WBR
@@ -21,9 +21,10 @@ export-wbr-policy \
 pytest
 ```
 
-全新环境在 editable 安装前还需一次性安装轻量构建工具：
-`python -m pip install hatchling editables`。`uv.lock` 保留用于依赖版本审计和复现，
-但日常命令不通过 `uv run` 执行。
+pip 默认在隔离的临时环境中自动准备 Hatchling 构建后端。仅在离线安装时，才需要先执行
+`python -m pip install hatchling editables`，然后给 editable 安装命令追加
+`--no-build-isolation`。`uv.lock` 保留用于依赖版本审计和复现，但日常命令不通过
+`uv run` 执行。
 
 mjlab 通过项目的 `mjlab.tasks` entry point 自动发现两个任务，无需修改 mjlab 本身。
 
@@ -55,6 +56,22 @@ WASD 移动，Q/E/F 调高度，Shift 旋转，X 停止移动，P 暂停，Backs
 
 仿真使用 1 ms Euler/Newton 步长、20 次迭代、`1e-9` 容差；每次 policy step 固定执行 10 个物理子步。腿部在每个子步执行位置 PD，轮子执行速度 PD，两个气弹簧 tendon actuator 的控制量保持为零并由 MJCF bias 产生被动力。
 
+## STM32 USB 硬件在环
+
+可把同一个原生 MuJoCo 闭环的策略推理替换为 USB 连接的 STM32H723：
+
+```bash
+python -m pip install 'pyserial>=3.5,<4'
+python -m pip install --no-deps -e .
+sim2hil-wbr --port /dev/ttyACM0 --mode plane
+sim2hil-wbr --port /dev/ttyACM0 --mode jump --headless --steps 2000 \
+  --output logs/hil/jump_eval.npz
+```
+
+主机仍负责 25 维观测、125 维历史、动作验证、PD 和 MuJoCo 步进；下位机只执行
+plane/jump 网络推理。通信失败时不会推进物理或复用旧 action。协议、100 Hz 墙钟调度、
+统计字段与验收方式见 [STM32 USB HIL 使用说明](docs/hil.md)。
+
 ## 文件职责
 
 - `assets/rm26_pnx_wbr_mjcf/`: 当前默认模型，来自指定上游仓库的原始 MJCF 与 15 个 STL。
@@ -66,6 +83,7 @@ WASD 移动，Q/E/F 调高度，Shift 旋转，X 停止移动，P 暂停，Backs
 - `src/wbr_mjlab/rl.py`: 最小 Sequence-PPO、续训状态和 ONNX 导出。
 - `src/wbr_mjlab/sim2sim.py`: 原生 MuJoCo / ONNX 推理、观测、PD、键盘状态及 CLI。
 - `src/wbr_mjlab/sim2sim_viewer.py`: GLFW 键盘窗口与实时调度。
+- `src/wbr_mjlab/hil/`: STM32 USB framing、同步客户端、policy adapter 与 HIL CLI。
 - `tests/test_migration.py`: 模型、MDP、环境、学习与导出验收。
 - `assets/policies/legacy_*.onnx`: 仅归档的旧模型，不用于新 WBR 部署或续训。
 
