@@ -24,8 +24,8 @@ python -m wbr_mjlab.sim2sim --mode plane \
   --jump-onnx logs/sim2sim/jump_2300.onnx
 ```
 
-窗口启动时暂停，点击窗口后按 **Enter** 开始；按 **Space** 从平地策略切到跳跃
-策略，再按一次切回；**1** 固定选择 plane，**2** 固定选择 jump。
+窗口启动时暂停，点击窗口后按 **Enter** 开始；按 **Space** 从平地策略切到跳跃，
+完成一次离地和稳定落地后自动切回；**1** 固定选择 plane，**2** 固定选择 jump。
 `--mode` 只决定初始策略，默认为 plane；要从跳跃策略开始可设为 `--mode jump`。
 两个网络在打开窗口前完成加载和接口校验，切换时不重新加载文件。
 
@@ -53,6 +53,20 @@ python -m wbr_mjlab.sim2sim \
 python -m wbr_mjlab.sim2sim \
   --mode plane --onnx logs/sim2sim/plane_1600.onnx
 ```
+
+加载静态 MuJoCo XML/MJCF 地形时追加：
+
+```bash
+python -m wbr_mjlab.sim2sim \
+  --mode plane --onnx logs/sim2sim/plane_1600.onnx \
+  --terrain-xml assets/terrains/stairs.xml
+```
+
+相对路径以项目根目录为基准。地形可以包含多个 geom 以及 XML 相对路径引用的 mesh、
+heightfield、纹理和材质，但不能包含关节或 actuator。地形 geom 的摩擦和碰撞配置来自
+XML；匿名 geom 会自动命名，所有可碰撞 geom 都会被轮地接触判断识别。机器人重置位置、
+姿态和关节角来自机器人 MJCF 的 `home` keyframe，地形应在该坐标附近提供接触表面。
+训练和 mjlab `play` 使用同一文件时设置 `WBR_TERRAIN_XML=assets/terrains/stairs.xml`。
 
 本机也已导出该示例，但它来自较早的 plane checkpoint，不能假设它已适应当前模型。
 导出时写入的元数据描述**当前代码的部署约定**，不可能追溯证明旧 checkpoint 的训练
@@ -82,7 +96,7 @@ python -m wbr_mjlab.sim2sim \
 | Backspace | 恢复初始姿态，清空动作和历史，暂停并解除使能 |
 | Esc | 退出 |
 | 鼠标左键拖动 / 滚轮 | 旋转相机 / 缩放；相机跟随机身 |
-| Space | 在已加载的 plane / jump 策略间切换，按住不会重复切换 |
+| Space | 触发一次 jump，检测到离地并稳定落地后自动切回 plane |
 | 1 / 2 | 直接选择 plane / jump 策略 |
 | G | 显示未提供台阶策略的提示，不额外施力 |
 
@@ -94,6 +108,11 @@ Q/E/F 对 plane 分别为 `0.10 / 0.15 / 0.20 m`，对 jump 为
 `0.12 / 0.135 / 0.15 m`。这是训练中的 **root 高度指令**，不是参考控制器的虚拟腿长。
 Shift 映射为策略的 yaw-rate 指令，不切换参考项目的 spin LQR。
 
+运行接口允许的最大指令为 **±3 m/s 前进速度** 与 **±8 rad/s yaw-rate**；命令行可用
+`--velocity 3 --yaw-rate 8` 设置键盘幅值，无窗口模式可用 `--vx 3 --yaw 8`。当前已导出的
+旧策略是在较窄范围内训练的，只有按新范围重新训练、导出并部署的策略才应被期待稳定覆盖
+这些极限指令。
+
 可以调低键盘速度，从小指令开始验收：
 
 ```bash
@@ -104,15 +123,16 @@ python -m wbr_mjlab.sim2sim --mode jump \
 ### 双策略切换的范围
 
 当前策略只有 `[vx, yaw_rate, height]` 三个连续指令，没有 jump/stair 标志或跳跃阶段。
-因此 Space 的实现是**替换正在运行的 ONNX 策略**，不是给原策略添加 jump 输入，
+因此 Space 的实现是**临时替换正在运行的 ONNX 策略**，不是给原策略添加 jump 输入，
 也不向模型施加冲量。切换在控制步边界生效，同时切换观测缩放、PD 增益和高度范围。
 机身姿态、速度、仿真时间以及上一动作保持连续；旧模式的 5 帧历史丢弃，下一次推理
 用当前状态按新模式编码并填满历史，避免混用不同的指令缩放。
 
 切换后高度指令回到新模式的中档，WASD 按住状态保留；使能和暂停状态不会改变。
-Backspace 重置物理状态但保留当前策略选择。程序**不会自动判断起跳完成或落地并切回**，
-需要再次按 Space 或按 1。两份策略并未专门联合训练切换过程，建议先低速/静止切换，
-不要把能切换理解为任意姿态下都能稳定完成一次跳跃。
+Space 触发后，程序要求连续 2 个控制周期双轮离地，再要求连续 3 个控制周期双轮接地，
+然后在下一个控制边界切回 plane。数字键 1/2 仍用于手动选择并会取消一次性跳跃状态；
+Backspace 会重置物理状态和一次性跳跃状态。两份策略并未专门联合训练切换过程，建议先
+低速/静止触发，不要把能切换理解为任意姿态下都能稳定完成一次跳跃。
 
 ## 已对齐的接口
 
@@ -126,7 +146,7 @@ Backspace 重置物理状态但保留当前策略选择。程序**不会自动�
 | 轮目标 | `10 × action rad/s`，`Kd=0.2` |
 | 限幅 | 动作 ±100；腿 ±20 Nm；轮 ±5.2 Nm |
 | 气弹簧 | 两个控制输入保持 0，由 MJCF bias 产生被动力 |
-| 默认姿态 | 项目适配后的 home，而非上游位于地面以下的演示 keyframe |
+| 默认姿态 | 直接来自机器人 MJCF 的 `home` keyframe；修改 XML 后需重启进程 |
 | 碰撞 | 保留训练时的轮/连杆网格与地面接触，关闭机器人自碰撞 |
 | 推理 | 确定性动作均值，CPU ONNX Runtime 单线程，不采样动作噪声 |
 

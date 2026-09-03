@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.events import push_by_setting_velocity, reset_scene_to_default
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
@@ -19,12 +21,22 @@ from mjlab.viewer import ViewerConfig
 from . import mdp
 from .mdp import HybridActionCfg, WbrCommandCfg
 from .rewards import JUMP_REWARDS, PLANE_REWARDS
-from .robot import PENALIZED_COLLISION_GEOM_NAMES, WHEEL_GEOM_NAMES, get_wbr_robot_cfg
+from .robot import (
+  MAX_FORWARD_COMMAND,
+  MAX_YAW_COMMAND,
+  PENALIZED_COLLISION_GEOM_NAMES,
+  WHEEL_GEOM_NAMES,
+  get_wbr_robot_cfg,
+)
+from .terrain import configured_terrain_xml, get_xml_terrain_cfg
 
 
-def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
+def make_env_cfg(
+  mode: mdp.Mode, *, play: bool = False, terrain_xml: str | Path | None = None
+) -> ManagerBasedRlEnvCfg:
   """Build plane or jump without duplicating an environment class."""
   is_plane = mode == "plane"
+  terrain_xml_path = configured_terrain_xml(terrain_xml)
   num_envs = 1 if play else (8192 if is_plane else 4096)
   rewards = PLANE_REWARDS if is_plane else JUMP_REWARDS
   clip = 1.0 if is_plane else 2.5
@@ -80,24 +92,39 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
     )
     for name, weight in rewards
   }
-  contact_secondary = ContactMatch(mode="geom", pattern="terrain")
+  contact_secondary = (
+    ContactMatch(mode="geom", pattern=".*", entity="terrain")
+    if terrain_xml_path is not None
+    else ContactMatch(mode="geom", pattern="terrain")
+  )
+  terrain = (
+    None
+    if terrain_xml_path is not None
+    else TerrainEntityCfg(
+      terrain_type="plane",
+      env_spacing=2.0,
+      geoms=(
+        GeomCfg(
+          geom_names_expr=("terrain",),
+          contype=1,
+          conaffinity=2,
+          friction=(0.8, 0.005, 0.0001),
+        ),
+      ),
+    )
+  )
+  entities = {"robot": get_wbr_robot_cfg()}
+  if terrain_xml_path is not None:
+    entities = {"terrain": get_xml_terrain_cfg(terrain_xml_path), **entities}
+  contact_sensor_kwargs = (
+    {"secondary_policy": "any"} if terrain_xml_path is not None else {}
+  )
   cfg = ManagerBasedRlEnvCfg(
     scene=SceneCfg(
       num_envs=num_envs,
       env_spacing=2.0,
-      terrain=TerrainEntityCfg(
-        terrain_type="plane",
-        env_spacing=2.0,
-        geoms=(
-          GeomCfg(
-            geom_names_expr=("terrain",),
-            contype=1,
-            conaffinity=2,
-            friction=(0.8, 0.005, 0.0001),
-          ),
-        ),
-      ),
-      entities={"robot": get_wbr_robot_cfg()},
+      terrain=terrain,
+      entities=entities,
       sensors=(
         ContactSensorCfg(
           name="wheel_contact",
@@ -106,6 +133,7 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
           fields=("found", "force"),
           reduce="netforce",
           num_slots=1,
+          **contact_sensor_kwargs,
         ),
         ContactSensorCfg(
           name="penalized_contact",
@@ -114,6 +142,7 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
           fields=("found", "force"),
           reduce="netforce",
           num_slots=1,
+          **contact_sensor_kwargs,
         ),
       ),
     ),
@@ -122,8 +151,10 @@ def make_env_cfg(mode: mdp.Mode, *, play: bool = False) -> ManagerBasedRlEnvCfg:
     commands={
       "motion": WbrCommandCfg(
         mode=mode,
-        vx=(-2.0, 2.0) if is_plane else (-2.1, 2.1),
-        yaw=(-2.0, 2.0),
+        # Plane starts at +/-2 m/s and expands to MAX_FORWARD_COMMAND through
+        # its curriculum; jump trains over the full deployment range directly.
+        vx=(-2.0, 2.0) if is_plane else (-MAX_FORWARD_COMMAND, MAX_FORWARD_COMMAND),
+        yaw=(-MAX_YAW_COMMAND, MAX_YAW_COMMAND),
         height=(0.10, 0.20) if is_plane else (0.12, 0.15),
         resampling_time_range=(5.0, 5.0) if is_plane else (20.0, 20.0),
       )

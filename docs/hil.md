@@ -23,9 +23,9 @@ Ubuntu 上设备通常属于 `root:dialout`。若出现 `Permission denied`，�
 `WBR-H723-HIL-v1`；`Doraemon` 表示仍在运行加入 HIL 前的基础固件。不要把 ST-LINK
 调试器自带的虚拟串口当成 HIL 端口。CLI 会在握手前打印并检查这个身份。
 
-窗口操作与 sim2sim 相同。Enter 使能，Space 切换 plane/jump，1/2 直接选择策略，
-Backspace 重置。握手要求固件同时支持两个模型；切换发生在控制步边界，并按新模式重建
-5 帧历史。
+窗口操作与 sim2sim 相同。Enter 使能，Space 触发一次跳跃并在落地后自动切回 plane，
+1/2 直接手动选择策略，Backspace 重置。握手要求固件同时支持两个模型；切换发生在
+控制步边界，并按新模式重建 5 帧历史。
 
 无窗口模式默认按墙钟 100 Hz best-effort 运行（普通 Linux 调度并非硬实时），不会因一次
 延迟而突发追赶，也不会跳过仿真步：
@@ -36,11 +36,31 @@ sim2hil-wbr --port /dev/ttyACM0 --mode jump --headless \
   --output logs/hil/jump_eval.npz
 ```
 
+HIL 的命令接口上限为 **±3 m/s 前进速度**、**±8 rad/s yaw-rate**；例如可使用
+`--vx 3 --yaw 8`，或在窗口模式使用 `--velocity 3 --yaw-rate 8`。这不改变 USB 协议或
+STM32 推理实现；旧模型是在更小指令范围内训练的，使用新极限前应重新训练并部署对应模型。
+
 JSON 结果包含 USB 往返和板端推理的 min/mean/p50/p95/max，以及墙钟 deadline miss
 计数。长时间 GUI 会话的 count/min/mean/max 为全程精确统计，p50/p95 来自最多 4096 个
 均匀保留样本，内存不会随运行时长增长。NPZ 在 sim2sim 轨迹字段之外保存
 `round_trip_us` 和 `inference_us`。调试时可用 `--no-realtime` 尽快运行，但这不能用于
 验证 100 Hz 实时能力。
+
+GUI 左上角实时显示 RTF、最近一次 USB 往返和 MCU 推理耗时；按 Esc 或 Ctrl+C 退出后，
+终端还会打印全程统计。GUI 默认使用 NVIDIA PRIME 独显，不改变物理、碰撞或视觉网格；
+因此通常直接运行即可：
+
+```bash
+sim2hil-wbr --port /dev/ttyACM0 --mode plane \
+  --terrain-xml ../wbr/rmuc2026_battlefield_mjcf/model.xml --velocity 3
+```
+
+需要恢复桌面会话的系统默认 GPU 时，显式指定：
+
+```bash
+sim2hil-wbr --gpu system --port /dev/ttyACM0 --mode plane \
+  --terrain-xml ../wbr/rmuc2026_battlefield_mjcf/model.xml --velocity 3
+```
 
 ## 固定协议
 

@@ -10,8 +10,9 @@ from pathlib import Path
 
 import numpy as np
 
-from ..robot import POLICY_DT
+from ..robot import MAX_FORWARD_COMMAND, MAX_YAW_COMMAND, POLICY_DT
 from ..sim2sim import KeyboardControl, NativeRunner
+from ..terrain import resolve_terrain_xml
 from .client import HilClient, HilError, HilTransportError, UsbPolicy
 
 EXPECTED_USB_VID = 0x0483
@@ -75,6 +76,12 @@ def parse_args(argv=None):
   )
   parser.add_argument("--session", type=_uint32, help="Fixed session id (default: random)")
   parser.add_argument("--mode", choices=("plane", "jump"), default="plane")
+  parser.add_argument(
+    "--gpu",
+    choices=("nvidia", "system"),
+    default="nvidia",
+    help="OpenGL GPU for the viewer (default: NVIDIA PRIME offload)",
+  )
   parser.add_argument("--headless", action="store_true")
   parser.add_argument("--steps", type=int, default=2000, help="Headless control steps at 100 Hz")
   parser.add_argument("--vx", type=float, default=0.0, help="Headless forward command, m/s")
@@ -82,6 +89,9 @@ def parse_args(argv=None):
   parser.add_argument("--height", type=float, help="Headless root-height command, m")
   parser.add_argument("--velocity", type=float, default=0.8, help="Keyboard speed, m/s")
   parser.add_argument("--yaw-rate", type=float, default=1.5, help="Keyboard yaw rate, rad/s")
+  parser.add_argument(
+    "--terrain-xml", type=Path, help="Static MuJoCo XML/MJCF terrain (relative to project root)"
+  )
   parser.add_argument("--output", type=Path, help="Headless trajectory .npz")
   parser.add_argument(
     "--realtime",
@@ -90,6 +100,11 @@ def parse_args(argv=None):
     help="Pace headless control steps against the 100 Hz wall clock",
   )
   args = parser.parse_args(argv)
+  if args.terrain_xml is not None:
+    try:
+      args.terrain_xml = resolve_terrain_xml(args.terrain_xml)
+    except (FileNotFoundError, ValueError) as exc:
+      parser.error(str(exc))
   height_range = (0.10, 0.20) if args.mode == "plane" else (0.12, 0.15)
   args.height = args.height if args.height is not None else sum(height_range) / 2
   numeric = (
@@ -101,18 +116,17 @@ def parse_args(argv=None):
     args.velocity,
     args.yaw_rate,
   )
-  max_vx = 2.0 if args.mode == "plane" else 2.1
   valid = (
     all(np.isfinite(value) for value in numeric)
     and args.timeout_ms > 0
     and args.handshake_timeout_ms > 0
     and args.baudrate > 0
     and args.steps > 0
-    and abs(args.vx) <= max_vx
-    and abs(args.yaw) <= 2.0
+    and abs(args.vx) <= MAX_FORWARD_COMMAND
+    and abs(args.yaw) <= MAX_YAW_COMMAND
     and height_range[0] <= args.height <= height_range[1]
-    and 0 < args.velocity <= 2.0
-    and 0 < args.yaw_rate <= 2.0
+    and 0 < args.velocity <= MAX_FORWARD_COMMAND
+    and 0 < args.yaw_rate <= MAX_YAW_COMMAND
   )
   if not valid:
     parser.error("Commands, timing and serial settings must be finite and within valid ranges")
@@ -212,7 +226,9 @@ def run(args) -> dict:
     session=args.session,
   ) as client:
     policies = {mode: UsbPolicy(client, mode) for mode in ("plane", "jump")}
-    runner = NativeRunner(policies[args.mode], args.mode, policies=policies)
+    runner = NativeRunner(
+      policies[args.mode], args.mode, policies=policies, terrain_xml=args.terrain_xml
+    )
     hello = client.handshake()
     print(
       f"MuJoCo / STM32 USB HIL | session {client.session:#010x} | "
@@ -228,7 +244,7 @@ def run(args) -> dict:
     )
     from ..sim2sim_viewer import run_viewer
 
-    run_viewer(runner, keyboard, backend_name="STM32 USB HIL")
+    run_viewer(runner, keyboard, backend_name="STM32 USB HIL", gpu=args.gpu)
     return {
       "backend": "stm32_usb_hil",
       "port": args.port,

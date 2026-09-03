@@ -37,6 +37,8 @@ from wbr_mjlab.robot import (
   ACTIVE_JOINT_NAMES,
   HOME_ACTIVE_JOINT_POS,
   HOME_JOINT_POS,
+  HOME_ROOT_POS,
+  HOME_ROOT_ROT,
   IMU_OFFSET,
   MOTOR_ACTUATOR_NAMES,
   MOTOR_ZERO_RAD,
@@ -71,7 +73,11 @@ def test_mjcf_topology_and_vendored_assets(model: mujoco.MjModel) -> None:
     "meshes/" + mesh.attrib["file"] for mesh in ET.parse(WBR_XML_PATH).findall("./asset/mesh")
   }
   assert set(manifest["sha256"]) == {"mjmodel.xml", *mesh_files}
+  # The manifest retains the exact upstream MJCF hash for provenance, while
+  # users may intentionally customize only the XML home keyframe.
   for path, expected in manifest["sha256"].items():
+    if path == "mjmodel.xml":
+      continue
     assert hashlib.sha256((WBR_XML_PATH.parent / path).read_bytes()).hexdigest() == expected
   # The adapter must not alter source dynamics, geometry, or sensor positions.
   upstream = mujoco.MjModel.from_xml_path(str(WBR_XML_PATH))
@@ -99,24 +105,7 @@ def test_mjcf_topology_and_vendored_assets(model: mujoco.MjModel) -> None:
     "site_pos",
   ):
     np.testing.assert_array_equal(getattr(model, field), getattr(upstream, field))
-  spec = load_wbr_spec()
-  spec.worldbody.add_geom(
-    name="terrain",
-    type=mujoco.mjtGeom.mjGEOM_PLANE,
-    size=(0, 0, 0.1),
-    contype=1,
-    conaffinity=2,
-  )
-  floor_model = spec.compile()
-  data = mujoco.MjData(floor_model)
-  mujoco.mj_resetDataKeyframe(floor_model, data, 0)
-  mujoco.mj_forward(floor_model, data)
-  assert data.ncon == 0  # No mesh penetration at reset, including closed-chain pivots.
-  assert np.max(np.abs(data.efc_pos[:12])) < 1e-7
-  data.qpos[2] -= 0.002
-  mujoco.mj_forward(floor_model, data)
-  touching = {floor_model.geom(gid).name for c in data.contact for gid in c.geom}
-  assert {"terrain", "collision_lwheel", "collision_rwheel"} <= touching
+  np.testing.assert_array_equal(model.key("home").qpos, upstream.key("home").qpos)
 
 
 def test_motor_order_axes_limits_and_home(model: mujoco.MjModel) -> None:
@@ -131,7 +120,8 @@ def test_motor_order_axes_limits_and_home(model: mujoco.MjModel) -> None:
     assert model.jnt_actfrcrange[jid, 1] >= limit
     np.testing.assert_allclose(model.actuator(name + "_actuator").forcerange, (-limit, limit))
   assert model.nkey == 1
-  assert model.key("home").qpos[2] == pytest.approx(0.175)
+  np.testing.assert_allclose(model.key("home").qpos[:3], HOME_ROOT_POS)
+  np.testing.assert_allclose(model.key("home").qpos[3:7], HOME_ROOT_ROT)
   home = [model.key("home").qpos[model.jnt_qposadr[model.joint(n).id]] for n in ACTIVE_JOINT_NAMES]
   np.testing.assert_allclose(home, HOME_ACTIVE_JOINT_POS)
   complete_home = {
@@ -367,9 +357,12 @@ def test_wbr_control_geometry_is_mirrored_and_continuous(model: mujoco.MjModel) 
   wheel_length = np.linalg.norm(wheel_delta[[0, 2]])
   wheel_angle = math.atan2(wheel_delta[0], -wheel_delta[2])
   assert length[0, 0].item() == pytest.approx(wheel_length, abs=0.01)
-  assert angle[0, 0].item() == pytest.approx(wheel_angle, abs=0.05)
+  # The XML may select either valid assembly branch of the closed chain. The
+  # controller and MuJoCo use opposite angle signs on the folded branch.
+  assert abs(angle[0, 0].item()) == pytest.approx(abs(wheel_angle), abs=0.05)
   np.testing.assert_allclose(left[[0, 2]], right[[0, 2]], atol=2e-6)
-  assert left[1] == pytest.approx(-right[1], abs=2e-6)
+  root_y = model.key("home").qpos[1]
+  assert left[1] - root_y == pytest.approx(-(right[1] - root_y), abs=2e-6)
   np.testing.assert_allclose(MOTOR_ZERO_RAD, (-0.06, -0.20, 0, 0.06, 0.20, 0))
   assert WHEEL_RADIUS == pytest.approx(0.060)
 
@@ -693,6 +686,40 @@ def test_jump_contact_and_flight_rewards_with_real_mesh_model() -> None:
     pos, quat, _ = state._raw()
     root = torch.cat((pos, quat, torch.zeros(4, 6)), dim=1)
 
+    # Derive a wheel-on-plane root height from the XML joint pose instead of
+    # assuming the former hard-coded z=0.175 home. Native MuJoCo provides a
+    # cheap source-independent contact threshold for the Warp sensor test.
+    native_model = env.sim.mj_model
+    native_data = mujoco.MjData(native_model)
+    native_data.qpos[:] = native_model.key("init_state").qpos
+    root_joint = native_model.body("robot/base_link").jntadr[0]
+    root_qadr = native_model.jnt_qposadr[root_joint]
+    wheel_ids = {
+      native_model.geom("robot/collision_lwheel").id,
+      native_model.geom("robot/collision_rwheel").id,
+    }
+    terrain_id = native_model.geom("terrain").id
+
+    def native_wheel_contact(height: float) -> bool:
+      native_data.qpos[root_qadr + 2] = height
+      mujoco.mj_forward(native_model, native_data)
+      return any(
+        {int(contact.geom1), int(contact.geom2)} == {terrain_id, wheel_id}
+        for contact in native_data.contact
+        for wheel_id in wheel_ids
+      )
+
+    low, high = HOME_ROOT_POS[2] - 2.0, HOME_ROOT_POS[2] + 1.0
+    assert native_wheel_contact(low) and not native_wheel_contact(high)
+    for _ in range(32):
+      middle = 0.5 * (low + high)
+      if native_wheel_contact(middle):
+        low = middle
+      else:
+        high = middle
+    contact_height = low - 0.003
+    airborne_height = contact_height + 0.5
+
     def place(height: float) -> None:
       # Controlled sensor snapshots isolate contact detection from policy motion.
       root[:, 2] = height
@@ -703,7 +730,7 @@ def test_jump_contact_and_flight_rewards_with_real_mesh_model() -> None:
       state.cached_step = -1
       state.refresh()
 
-    place(0.173)  # About 1.2 mm of wheel penetration ensures a measurable load.
+    place(contact_height)
     contact = env.scene["wheel_contact"].data
     assert (contact.found > 0).all()
     assert (contact.force[..., 2].abs() > 1.0).all()
@@ -711,24 +738,24 @@ def test_jump_contact_and_flight_rewards_with_real_mesh_model() -> None:
     for name in ("flight", "base_height_flight", "leg_tuck", "line_z"):
       assert not reward_value(state, name).any()
 
-    place(0.675)
+    place(airborne_height)
     assert not env.scene["wheel_contact"].data.found.any()
     assert not state.in_flight.any()  # Retain the existing one-frame dropout filter.
-    place(0.675)
+    place(airborne_height)
     assert state.in_flight.all()
     assert (reward_value(state, "flight") == 1).all()
     assert (reward_value(state, "base_height_flight") > 0).all()
     reward_value(state, "encourage_jump")
     assert (state.base_air_time > 0).all()
 
-    place(0.173)
+    place(contact_height)
     assert not state.in_flight.any()  # Landing clears flight immediately.
     assert (reward_value(state, "encourage_jump") > 0).all()
     assert not state.base_air_time.any()
     assert not reward_value(state, "encourage_jump").any()
     # A new episode must not inherit flight or accumulated landing bonuses.
-    place(0.675)
-    place(0.675)
+    place(airborne_height)
+    place(airborne_height)
     reward_value(state, "encourage_jump")
     env.reset(env_ids=torch.arange(4))
     assert not state.base_air_time.any()

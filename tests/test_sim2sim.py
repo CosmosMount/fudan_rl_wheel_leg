@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import mujoco
 import numpy as np
 import pytest
@@ -11,9 +13,11 @@ from wbr_mjlab.robot import HOME_ACTIVE_JOINT_POS, TORQUE_LIMITS
 from wbr_mjlab.sim2sim import (
   KeyboardControl,
   NativeRunner,
+  grounded_wheel_count,
   motor_torque,
   observation_frame,
   parse_args,
+  wheels_grounded,
 )
 from wbr_mjlab.task import make_env_cfg
 
@@ -192,6 +196,65 @@ def test_keyboard_edges_release_focus_and_command_limits():
   assert jump.command()[2] == pytest.approx(0.15)
 
 
+def test_wheel_ground_contact_requires_both_wheels_on_terrain():
+  wheel_ids = frozenset((11, 12))
+  left = SimpleNamespace(geom1=3, geom2=11)
+  right_reversed = SimpleNamespace(geom1=12, geom2=3)
+  unrelated = SimpleNamespace(geom1=3, geom2=99)
+  assert grounded_wheel_count((), 3, wheel_ids) == 0
+  assert grounded_wheel_count((left, unrelated), 3, wheel_ids) == 1
+  assert not wheels_grounded((left, unrelated), 3, wheel_ids)
+  assert wheels_grounded((left, right_reversed, unrelated), 3, wheel_ids)
+
+
+def test_space_runs_one_jump_then_returns_to_plane_after_stable_landing():
+  class Runner:
+    def __init__(self):
+      self.mode = "plane"
+      self.contact_count = 2
+
+    def switch_policy(self, mode):
+      changed = mode != self.mode
+      self.mode = mode
+      return changed
+
+    def wheels_grounded(self):
+      return self.contact_count == 2
+
+    def grounded_wheel_count(self):
+      return self.contact_count
+
+  runner = Runner()
+  keyboard = KeyboardControl("plane", available_modes=("plane", "jump"))
+  keyboard.key(257, 1)
+  keyboard.key(32, 1)
+  keyboard.key(32, 0)
+  assert keyboard.pending_mode == "jump" and keyboard.pending_jump_once
+  keyboard.apply_policy_request(runner)
+  assert keyboard.mode == runner.mode == "jump"
+  assert keyboard.jump_once_phase == "takeoff" and keyboard.jump_once_ground_seen
+
+  keyboard.key(32, 1)
+  keyboard.key(32, 0)
+  assert keyboard.pending_mode is None
+  assert keyboard.jump_once_phase == "takeoff"
+
+  for contact_count in (0, 1, 0, 0):
+    runner.contact_count = contact_count
+    keyboard.update_jump_once(runner)
+  assert keyboard.jump_once_phase == "landing"
+
+  for _ in range(2):
+    runner.contact_count = 2
+    keyboard.update_jump_once(runner)
+    assert keyboard.pending_mode is None
+  keyboard.update_jump_once(runner)
+  assert keyboard.pending_mode == "plane" and keyboard.jump_once_phase == "returning"
+  keyboard.apply_policy_request(runner)
+  assert keyboard.mode == runner.mode == "plane"
+  assert keyboard.jump_once_phase is None
+
+
 @pytest.mark.parametrize("initial,target", (("plane", "jump"), ("jump", "plane")))
 def test_policy_switch_keeps_physics_and_rebuilds_history(initial, target, monkeypatch):
   captured = {}
@@ -271,11 +334,29 @@ def test_single_and_dual_policy_cli():
   assert dual.mode == "plane" and set(dual.policy_paths) == {"plane", "jump"}
   mixed = parse_args(["--mode", "jump", "--onnx", "jump.onnx", "--plane-onnx", "plane.onnx"])
   assert mixed.policy_paths == dual.policy_paths
+  high_command = parse_args(
+    [
+      "--onnx",
+      "plane.onnx",
+      "--vx",
+      "3",
+      "--yaw",
+      "8",
+      "--velocity",
+      "3",
+      "--yaw-rate",
+      "8",
+    ]
+  )
+  assert (high_command.vx, high_command.yaw) == (3.0, 8.0)
+  assert (high_command.velocity, high_command.yaw_rate) == (3.0, 8.0)
   for args in (
     [],
     ["--jump-onnx", "jump.onnx"],
     ["--onnx", "a.onnx", "--plane-onnx", "b.onnx"],
-    ["--mode", "jump", "--onnx", "jump.onnx", "--plane-onnx", "plane.onnx", "--velocity", "2.1"],
+    ["--mode", "jump", "--onnx", "jump.onnx", "--plane-onnx", "plane.onnx", "--velocity", "3.01"],
+    ["--onnx", "plane.onnx", "--vx", "3.01"],
+    ["--onnx", "plane.onnx", "--yaw", "8.01"],
   ):
     with pytest.raises(SystemExit) as exc:
       parse_args(args)

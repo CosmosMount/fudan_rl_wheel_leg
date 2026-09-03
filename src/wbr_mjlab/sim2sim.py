@@ -16,13 +16,17 @@ from .robot import (
   ACTIVE_JOINT_NAMES,
   HOME_ACTIVE_JOINT_POS,
   LEG_IDS,
+  MAX_FORWARD_COMMAND,
+  MAX_YAW_COMMAND,
   MOTOR_ACTUATOR_NAMES,
   POLICY_DT,
   TORQUE_LIMITS,
   WBR_XML_PATH,
+  WHEEL_GEOM_NAMES,
   load_wbr_spec,
 )
 from .task import make_env_cfg
+from .terrain import attach_xml_terrain, configured_terrain_xml, resolve_terrain_xml
 
 METADATA_KEY = "wbr_contract"
 
@@ -124,26 +128,52 @@ def motor_torque(action, q, qd, mode: str) -> np.ndarray:
   return np.clip(torque, -np.asarray(TORQUE_LIMITS), TORQUE_LIMITS)
 
 
-def native_model(mode: str) -> mujoco.MjModel:
+def grounded_wheel_count(
+  contacts, terrain_geom_ids: int | frozenset[int], wheel_geom_ids: frozenset[int]
+) -> int:
+  """Count wheel collision geoms currently touching the terrain."""
+  terrain_ids = (
+    frozenset((terrain_geom_ids,)) if isinstance(terrain_geom_ids, int) else terrain_geom_ids
+  )
+  grounded: set[int] = set()
+  for contact in contacts:
+    geom1, geom2 = int(contact.geom1), int(contact.geom2)
+    if geom1 in terrain_ids and geom2 in wheel_geom_ids:
+      grounded.add(geom2)
+    elif geom2 in terrain_ids and geom1 in wheel_geom_ids:
+      grounded.add(geom1)
+  return len(grounded)
+
+
+def wheels_grounded(
+  contacts, terrain_geom_ids: int | frozenset[int], wheel_geom_ids: frozenset[int]
+) -> bool:
+  """Return true only when both wheel collision geoms touch the terrain."""
+  return grounded_wheel_count(contacts, terrain_geom_ids, wheel_geom_ids) == len(wheel_geom_ids)
+
+
+def native_model(mode: str, terrain_xml: str | Path | None = None) -> mujoco.MjModel:
   """Use the same mesh, closed chains, gas springs, floor and options as training."""
-  cfg = make_env_cfg(mode, play=True)
+  terrain_xml_path = configured_terrain_xml(terrain_xml)
+  cfg = make_env_cfg(mode, play=True, terrain_xml=terrain_xml_path)
   spec = load_wbr_spec()
-  spec.add_texture(
-    name="ground_grid",
-    type=mujoco.mjtTexture.mjTEXTURE_2D,
-    builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
-    rgb1=[0.32, 0.40, 0.48],
-    rgb2=[0.56, 0.63, 0.69],
-    width=256,
-    height=256,
-  )
-  material = spec.add_material(
-    name="ground_grid",
-    texuniform=True,
-    texrepeat=[2, 2],
-    reflectance=0.1,
-  )
-  material.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "ground_grid"
+  if terrain_xml_path is None:
+    spec.add_texture(
+      name="ground_grid",
+      type=mujoco.mjtTexture.mjTEXTURE_2D,
+      builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
+      rgb1=[0.32, 0.40, 0.48],
+      rgb2=[0.56, 0.63, 0.69],
+      width=256,
+      height=256,
+    )
+    material = spec.add_material(
+      name="ground_grid",
+      texuniform=True,
+      texrepeat=[2, 2],
+      reflectance=0.1,
+    )
+    material.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "ground_grid"
   spec.add_texture(
     name="sky",
     type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
@@ -153,15 +183,18 @@ def native_model(mode: str) -> mujoco.MjModel:
     width=256,
     height=1536,
   )
-  spec.worldbody.add_geom(
-    name="terrain",
-    type=mujoco.mjtGeom.mjGEOM_PLANE,
-    size=[0, 0, 0.05],
-    contype=1,
-    conaffinity=2,
-    friction=[0.8, 0.005, 0.0001],
-    material="ground_grid",
-  )
+  if terrain_xml_path is None:
+    spec.worldbody.add_geom(
+      name="terrain",
+      type=mujoco.mjtGeom.mjGEOM_PLANE,
+      size=[0, 0, 0.05],
+      contype=1,
+      conaffinity=2,
+      friction=[0.8, 0.005, 0.0001],
+      material="ground_grid",
+    )
+  else:
+    attach_xml_terrain(spec, terrain_xml_path)
   spec.worldbody.add_light(pos=[0, 0, 4], dir=[0, 0, -1])
   model = spec.compile()
   cfg.sim.mujoco.apply(model)
@@ -169,20 +202,44 @@ def native_model(mode: str) -> mujoco.MjModel:
 
 
 class NativeRunner:
-  def __init__(self, policy, mode: str, *, policies: dict | None = None):
+  def __init__(
+    self,
+    policy,
+    mode: str,
+    *,
+    policies: dict | None = None,
+    terrain_xml: str | Path | None = None,
+  ):
     self.mode = mode
     self.policy = policy
     self.policies = dict(policies or {})
     self.policies[mode] = policy
-    self.model = native_model(mode)
+    self.model = native_model(mode, terrain_xml)
     self.data = mujoco.MjData(self.model)
     self.qadr = np.array([self.model.joint(name).qposadr[0] for name in ACTIVE_JOINT_NAMES])
     self.motor_ids = np.array([self.model.actuator(name).id for name in MOTOR_ACTUATOR_NAMES])
+    self.terrain_geom_ids = frozenset(
+      geom_id
+      for geom_id in range(self.model.ngeom)
+      if self.model.geom(geom_id).name == "terrain"
+      or self.model.geom(geom_id).name.startswith("terrain/")
+    )
+    if not self.terrain_geom_ids:
+      raise ValueError("Simulation contains no terrain geoms")
+    # Retain the singular attribute for callers using the default plane.
+    self.terrain_geom_id = next(iter(self.terrain_geom_ids))
+    self.wheel_geom_ids = frozenset(self.model.geom(name).id for name in WHEEL_GEOM_NAMES)
     root_joint = self.model.body("base_link").jntadr[0]
     self.root_qadr = int(self.model.jnt_qposadr[root_joint])
     self.root_vadr = int(self.model.jnt_dofadr[root_joint])
     self.decimation = round(POLICY_DT / self.model.opt.timestep)
     self.reset()
+
+  def wheels_grounded(self) -> bool:
+    return wheels_grounded(self.data.contact, self.terrain_geom_ids, self.wheel_geom_ids)
+
+  def grounded_wheel_count(self) -> int:
+    return grounded_wheel_count(self.data.contact, self.terrain_geom_ids, self.wheel_geom_ids)
 
   def switch_policy(self, mode: str) -> bool:
     if mode not in self.policies:
@@ -300,24 +357,74 @@ class KeyboardControl:
     self.reset_requested = False
     self.quit_requested = False
     self.pending_mode: str | None = None
+    self.pending_jump_once = False
+    self.jump_once_phase: str | None = None
+    self.jump_once_ground_seen = False
+    self.jump_once_air_steps = 0
+    self.jump_once_land_steps = 0
     self.notice = "Enter: enable and run"
 
-  def request_policy(self, mode: str) -> None:
+  def _cancel_jump_once(self) -> None:
+    self.pending_jump_once = False
+    self.jump_once_phase = None
+    self.jump_once_ground_seen = False
+    self.jump_once_air_steps = 0
+    self.jump_once_land_steps = 0
+
+  def request_policy(self, mode: str, *, jump_once: bool = False) -> None:
     if mode not in self.available_modes:
       self.notice = f"No {mode} policy loaded; add --{mode}-onnx PATH"
       print(self.notice)
       return
+    if not jump_once:
+      self._cancel_jump_once()
     self.pending_mode = mode
+    self.pending_jump_once = jump_once
 
   def apply_policy_request(self, runner: NativeRunner) -> None:
     if self.pending_mode is None:
       return
     mode, self.pending_mode = self.pending_mode, None
+    jump_once, self.pending_jump_once = self.pending_jump_once, False
     if runner.switch_policy(mode):
       self.mode = mode
       self.height = self.heights[1]
-    self.notice = f"Active policy: {self.mode} (Space toggles, 1 plane, 2 jump)"
+    if jump_once and mode == "jump":
+      self.jump_once_phase = "takeoff"
+      self.jump_once_ground_seen = runner.wheels_grounded()
+      self.jump_once_air_steps = 0
+      self.jump_once_land_steps = 0
+      self.notice = "One-shot jump: waiting for takeoff"
+    else:
+      self._cancel_jump_once()
+      self.notice = f"Active policy: {self.mode} (Space one-shot jump, 1 plane, 2 jump)"
     print(self.notice)
+
+  def update_jump_once(self, runner: NativeRunner) -> None:
+    if self.jump_once_phase is None or self.mode != "jump" or not self.enabled:
+      return
+    contact_count = runner.grounded_wheel_count()
+    grounded = contact_count == 2
+    airborne = contact_count == 0
+    if self.jump_once_phase == "takeoff":
+      if grounded:
+        self.jump_once_ground_seen = True
+        self.jump_once_air_steps = 0
+      elif airborne and self.jump_once_ground_seen:
+        self.jump_once_air_steps += 1
+        if self.jump_once_air_steps >= 2:
+          self.jump_once_phase = "landing"
+          self.jump_once_land_steps = 0
+          self.notice = "One-shot jump: airborne, waiting for landing"
+      else:
+        self.jump_once_air_steps = 0
+      return
+    if self.jump_once_phase == "landing":
+      self.jump_once_land_steps = self.jump_once_land_steps + 1 if grounded else 0
+      if self.jump_once_land_steps >= 3:
+        self.jump_once_phase = "returning"
+        self.pending_mode = "plane"
+        self.notice = "One-shot jump: landed, returning to plane"
 
   def key(self, key: int, action: int) -> None:
     # GLFW: release=0, press=1, repeat=2. Only physical press edges toggle modes.
@@ -345,7 +452,12 @@ class KeyboardControl:
       self.quit_requested = True
     elif key == 32:
       current = self.pending_mode or self.mode
-      self.request_policy("jump" if current == "plane" else "plane")
+      if self.jump_once_phase is not None or self.pending_jump_once:
+        self.notice = "One-shot jump already active"
+      elif current == "plane":
+        self.request_policy("jump", jump_once=True)
+      else:
+        self.request_policy("plane")
     elif key in (ord("1"), ord("2")):
       self.request_policy("plane" if key == ord("1") else "jump")
     elif key == ord("G"):
@@ -374,6 +486,12 @@ def parse_args(argv=None):
   parser.add_argument("--plane-onnx", type=Path, help="Plane policy for keyboard switching")
   parser.add_argument("--jump-onnx", type=Path, help="Jump policy for keyboard switching")
   parser.add_argument("--mode", default="plane", choices=("plane", "jump"), help="Initial policy")
+  parser.add_argument(
+    "--gpu",
+    choices=("nvidia", "system"),
+    default="nvidia",
+    help="OpenGL GPU for the viewer (default: NVIDIA PRIME offload)",
+  )
   parser.add_argument("--headless", action="store_true")
   parser.add_argument("--steps", type=int, default=2000, help="Headless policy steps (100 Hz)")
   parser.add_argument("--vx", type=float, default=0.0, help="Headless forward command, m/s")
@@ -381,8 +499,16 @@ def parse_args(argv=None):
   parser.add_argument("--height", type=float, help="Headless root-height command, m")
   parser.add_argument("--velocity", type=float, default=0.8, help="Keyboard speed, m/s")
   parser.add_argument("--yaw-rate", type=float, default=1.5, help="Keyboard turn/spin speed, rad/s")
+  parser.add_argument(
+    "--terrain-xml", type=Path, help="Static MuJoCo XML/MJCF terrain (relative to project root)"
+  )
   parser.add_argument("--output", type=Path, help="Headless trajectory .npz")
   args = parser.parse_args(argv)
+  if args.terrain_xml is not None:
+    try:
+      args.terrain_xml = resolve_terrain_xml(args.terrain_xml)
+    except (FileNotFoundError, ValueError) as exc:
+      parser.error(str(exc))
   args.policy_paths = {
     mode: path
     for mode, path in (("plane", args.plane_onnx), ("jump", args.jump_onnx))
@@ -394,26 +520,26 @@ def parse_args(argv=None):
     args.policy_paths[args.mode] = args.onnx
   if args.mode not in args.policy_paths:
     parser.error(f"Provide --{args.mode}-onnx or --onnx for the initial --mode {args.mode}")
-  max_v = 2.0 if args.mode == "plane" else 2.1
-  keyboard_max_v = 2.0 if "plane" in args.policy_paths else 2.1
   heights = (0.10, 0.20) if args.mode == "plane" else (0.12, 0.15)
   args.height = args.height if args.height is not None else sum(heights) / 2
   if not (
     args.steps > 0
-    and abs(args.vx) <= max_v
-    and abs(args.yaw) <= 2.0
+    and abs(args.vx) <= MAX_FORWARD_COMMAND
+    and abs(args.yaw) <= MAX_YAW_COMMAND
     and heights[0] <= args.height <= heights[1]
-    and 0 < args.velocity <= keyboard_max_v
-    and 0 < args.yaw_rate <= 2.0
+    and 0 < args.velocity <= MAX_FORWARD_COMMAND
+    and 0 < args.yaw_rate <= MAX_YAW_COMMAND
   ):
-    parser.error("Commands must be finite and within training ranges; steps must be positive")
+    parser.error("Commands must be finite and within configured limits; steps must be positive")
   return args
 
 
 def main() -> None:
   args = parse_args()
   policies = {mode: OnnxPolicy(path, mode) for mode, path in args.policy_paths.items()}
-  runner = NativeRunner(policies[args.mode], args.mode, policies=policies)
+  runner = NativeRunner(
+    policies[args.mode], args.mode, policies=policies, terrain_xml=args.terrain_xml
+  )
   print(f"Native MuJoCo / ONNX CPU | {args.mode} | physics 1000 Hz / policy 100 Hz")
   if not args.headless:
     from .sim2sim_viewer import run_viewer
@@ -426,6 +552,7 @@ def main() -> None:
         args.yaw_rate,
         available_modes=policies,
       ),
+      gpu=args.gpu,
     )
     return
   command = np.array([args.vx, args.yaw, args.height], dtype=np.float32)

@@ -1,15 +1,38 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from wbr_mjlab.hil.cli import _headless
+from wbr_mjlab.hil.cli import _headless, parse_args
 from wbr_mjlab.hil.client import HilTimeoutError
 from wbr_mjlab.hil.protocol import ACTION_DIM, OBS_DIM
 from wbr_mjlab.sim2sim import NativeRunner
-from wbr_mjlab.sim2sim_viewer import _next_policy_deadline
+from wbr_mjlab.sim2sim_viewer import _next_policy_deadline, configure_gl_gpu
+
+
+def test_hil_cli_accepts_high_speed_commands_and_rejects_overflow():
+  args = parse_args(["--vx", "3", "--yaw", "8", "--velocity", "3", "--yaw-rate", "8"])
+  assert (args.vx, args.yaw, args.velocity, args.yaw_rate) == (3.0, 8.0, 3.0, 8.0)
+  assert args.gpu == "nvidia"
+  assert parse_args(["--gpu", "system"]).gpu == "system"
+  for extra in (("--vx", "3.01"), ("--yaw", "8.01")):
+    with pytest.raises(SystemExit) as exc:
+      parse_args(list(extra))
+    assert exc.value.code == 2
+
+
+def test_viewer_gpu_selection_defaults_to_nvidia_and_can_restore_system(monkeypatch):
+  monkeypatch.delenv("__NV_PRIME_RENDER_OFFLOAD", raising=False)
+  monkeypatch.delenv("__GLX_VENDOR_LIBRARY_NAME", raising=False)
+  configure_gl_gpu("nvidia")
+  assert os.environ["__NV_PRIME_RENDER_OFFLOAD"] == "1"
+  assert os.environ["__GLX_VENDOR_LIBRARY_NAME"] == "nvidia"
+  configure_gl_gpu("system")
+  assert "__NV_PRIME_RENDER_OFFLOAD" not in os.environ
+  assert "__GLX_VENDOR_LIBRARY_NAME" not in os.environ
 
 
 def test_native_runner_rolls_back_history_and_disarms_action_on_policy_timeout():

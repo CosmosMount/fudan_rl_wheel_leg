@@ -39,12 +39,45 @@ python -m wbr_mjlab.sim2sim --mode plane \
   --jump-onnx logs/sim2sim/jump_2300.onnx
 ```
 
-点击窗口后按 Enter 开始；Space 切换平地/跳跃策略，1/2 直接选择 plane/jump。
+点击窗口后按 Enter 开始；Space 触发一次跳跃并在落地后自动切回 plane，1/2 直接手动
+选择 plane/jump。
 WASD 移动，Q/E/F 调高度，Shift 旋转，X 停止移动，P 暂停，Backspace 重置。
 地面为棋盘格并有天空背景，物理接触配置不变；鼠标拖动旋转、滚轮缩放。
-切到 jump 不会自动判断落地并切回，需再次按 Space 或按 1。G 暂不支持台阶策略。
+一次性跳跃用双轮接触判断离地与稳定落地；G 暂不支持台阶策略。
 导出自己的 checkpoint、无窗口评估、控制接口及验收流程见
 [sim2sim 使用说明](docs/sim2sim.md)。
+
+## 从 XML 导入地形
+
+训练和 `play` 可通过 `WBR_TERRAIN_XML` 选择静态 MuJoCo XML/MJCF 地形：
+
+```bash
+WBR_TERRAIN_XML=assets/terrains/stairs.xml \
+  play Mjlab-Velocity-Flat-WBR \
+  --checkpoint-file logs/rsl_rl/wbr_plane/<RUN>/model_<ITER>.pt \
+  --num-envs 1 --viewer native
+
+WBR_TERRAIN_XML=/absolute/path/to/rough.xml \
+  train Mjlab-Velocity-Flat-WBR
+```
+
+原生 sim2sim 和 HIL 使用对应的命令行参数：
+
+```bash
+python -m wbr_mjlab.sim2sim --mode plane \
+  --onnx logs/sim2sim/plane_1600.onnx \
+  --terrain-xml assets/terrains/stairs.xml
+
+sim2hil-wbr --port /dev/ttyACM0 --mode plane \
+  --terrain-xml assets/terrains/stairs.xml
+```
+
+相对路径以项目根目录为基准。地形文件必须是静态模型：至少包含一个 `geom`，不能包含
+关节或 actuator；mesh、heightfield、纹理和材质可以正常引用，相关文件路径仍相对于地形
+XML 自身解析。XML 中的 geom 名称、摩擦和碰撞参数会保留，匿名 geom 会自动命名；多个
+地形 geom 均参与接触检测。机器人的重置位置、姿态和关节角来自机器人 MJCF 的 `home`
+keyframe，因此地形应在该坐标附近提供可接触表面。不设置
+`WBR_TERRAIN_XML`/`--terrain-xml` 时仍使用原来的棋盘格平面。
 
 ## 固定接口
 
@@ -96,8 +129,8 @@ plane/jump 网络推理。通信失败时不会推进物理或复用旧 action�
 的 `9c09472` 版本。原始文件及校验值保存在模型目录内，训练与 play 共用同一个加载入口。
 不再显示原来的橙色方箱；机身、闭链连杆和轮子均加载完整 STL，地面碰撞也使用这些网格。
 
-加载层保留当前任务的闭链初始姿态和仅与地面碰撞的掩码，避免上游 `home` 位于地下、
-以及闭链连接处的网格凸包自碰撞。具体适配记录见
+加载层直接采用机器人 XML 的 `home` 初始状态，并保留仅与地面碰撞的掩码，避免闭链
+连接处的网格凸包自碰撞。具体适配记录见
 [模型说明](assets/rm26_pnx_wbr_mjcf/README.md)。
 
 腿部电机限幅按上游从 40 Nm 改为 **20 Nm**，轮子仍为 5.2 Nm；旧 checkpoint

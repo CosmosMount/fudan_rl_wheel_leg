@@ -2,8 +2,9 @@
 
 Vendored from https://github.com/CosmosMount/rm26_pnx_wbr_mjcf at commit
 `9c09472d3b714dbc0d7e8bacf9ac4bcafc31fd25` (2026-08-27 retrieval).
-`mjmodel.xml` and its 15 referenced STL files are byte-for-byte upstream copies;
-`UPSTREAM.json` records their SHA-256 hashes. The unreferenced 98 MB assembly STL
+`UPSTREAM.json` records the upstream `mjmodel.xml` and 15 referenced STL SHA-256
+hashes. The local XML may intentionally customize its `home` keyframe; the mesh
+files remain byte-for-byte upstream copies. The unreferenced 98 MB assembly STL
 and URDF are not needed by this MJCF and are not copied.
 
 No license file was present at this revision. Upstream authors retain their
@@ -19,11 +20,10 @@ rights; check redistribution permission before publishing these assets.
   robot self-collision requires decomposed collision assets or validated pair
   exclusions first. Mesh-to-terrain collisions remain enabled; no primitive
   box/capsule robot geoms replace the meshes.
-- Replace the upstream `home` key's root translation
-  `(-10.00424, 0.00401, -1.17298)` and folded coordinates with the existing task's
-  closed-chain reset solution at `(0, 0, 0.175)`. Wheel mesh bottoms are about
-  0.8 mm above the plane and equality residuals are below `1e-7` m. For mjlab
-  composition, the key is replaced by the equivalent float32 entity init state.
+- Treat the XML `home` keyframe as the source of truth for root position,
+  orientation, all joint defaults, policy references and reset state. For mjlab
+  composition, these XML values are parsed into an equivalent float32 entity init
+  state; native MuJoCo retains and resets the original keyframe directly.
 
 Body inertias, joint axes/limits/damping, mesh vertices, friction, sensors,
 equality constraints, tendons and actuator definitions are retained. The control

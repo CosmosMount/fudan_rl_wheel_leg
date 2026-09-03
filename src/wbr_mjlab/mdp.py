@@ -20,6 +20,7 @@ from .robot import (
   ACTIVE_JOINT_NAMES,
   HOME_ACTIVE_JOINT_POS,
   LEG_IDS,
+  MAX_FORWARD_COMMAND,
   LEG_LINK_1,
   LEG_LINK_2,
   MOTOR_ZERO_RAD,
@@ -597,5 +598,5 @@ def velocity_curriculum(
     lin_ok = sums["tracking_lin_vel"][ids].mean() / env.max_episode_length > 0.7 * env.step_dt
     yaw_ok = sums["tracking_ang_vel"][ids].mean() / env.max_episode_length > 0.7 * 0.8 * env.step_dt
     if lin_ok and yaw_ok:
-      term.vx_limit = min(2.5, term.vx_limit + 0.1)
+      term.vx_limit = min(MAX_FORWARD_COMMAND, term.vx_limit + 0.1)
   return {"max_vx": torch.tensor(term.vx_limit, device=env.device)}
